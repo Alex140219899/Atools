@@ -8,7 +8,7 @@
 script_name("Tools Menu")
 script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
-script_version("1.0.15")
+script_version("1.0.16")
 
 require("lib.moonloader")
 require("encoding").default = "CP1251"
@@ -40,7 +40,7 @@ local sampev = require("lib.samp.events")
 
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
-local SCRIPT_VERSION_TEXT = "1.0.15"
+local SCRIPT_VERSION_TEXT = "1.0.16"
 local DATA_DIR_NAME = "Tools"
 local message_color = 0x009EFF
 
@@ -516,7 +516,7 @@ local function fetch_update_manifest()
 	end
 	local urls = build_manifest_urls()
 	local last_err = "не удалось скачать ToolsUpdate.json (GitHub и зеркало)"
-	local best_data, best_src = nil, nil
+	local best_data = nil
 	for _, manifest_url in ipairs(urls) do
 		if doesFileExist(tmp) then
 			pcall(os.remove, tmp)
@@ -538,9 +538,7 @@ local function fetch_update_manifest()
 					end
 					if pick then
 						best_data = data
-						best_src = manifest_url
 					end
-					log_msg("[Tools] ToolsUpdate.json v." .. ver .. " <- " .. tostring(manifest_url))
 				else
 					last_err = "в манифесте нет current_version или JSON не читается"
 				end
@@ -549,12 +547,6 @@ local function fetch_update_manifest()
 	end
 	if best_data then
 		last_manifest_cache = best_data
-		log_msg(
-			"[Tools] выбран манифест v."
-				.. version_trim(best_data.current_version)
-				.. " <- "
-				.. tostring(best_src)
-		)
 		return best_data, nil
 	end
 	return nil, last_err
@@ -585,7 +577,6 @@ local function probe_remote_script_max_version(update_url)
 				local ver = head:match("script_version%s*%(%s*[\"']([^\"']+)[\"']%s*%)")
 				if ver and ver ~= "" then
 					ver = version_trim(ver)
-					log_msg("[Tools] probe Tools.lua v." .. ver .. " <- " .. tostring(su))
 					if not best_ver or vig_compare_versions(ver, best_ver) > 0 then
 						best_ver = ver
 					end
@@ -755,7 +746,6 @@ local function download_best_script(script_urls, tmp, local_v, manifest_v)
 				local ver = body:match("script_version%s*%(%s*[\"']([^\"']+)[\"']%s*%)")
 				if ver and ver ~= "" then
 					ver = version_trim(ver)
-					log_msg("[Tools] Tools.lua v." .. ver .. " <- " .. tostring(su))
 					if vig_compare_versions(ver, local_v) > 0 then
 						if manifest_v == "" or vig_compare_versions(ver, manifest_v) >= 0 then
 							if not best_ver or vig_compare_versions(ver, best_ver) > 0 then
@@ -771,9 +761,6 @@ local function download_best_script(script_urls, tmp, local_v, manifest_v)
 	end
 	if doesFileExist(tmp) then
 		pcall(os.remove, tmp)
-	end
-	if best_ver then
-		log_msg("[Tools] выбран Tools.lua v." .. best_ver .. " <- " .. tostring(best_url))
 	end
 	return best_body, best_ver, best_url
 end
@@ -1489,8 +1476,7 @@ function main()
 	pcall(register_imgui)
 
 	sampChat("{009EFF}[Tools]{ffffff} v." .. get_local_script_version() .. " | /tools")
-	log_msg("[Tools] v." .. get_local_script_version() .. " | " .. configDirectory)
-	log_msg("[Tools] манифест обновлений: " .. UPDATE_MANIFEST_URL)
+	log_msg("[Tools] v." .. get_local_script_version() .. " | /tools")
 
 	if doesFileExist(worked_dir .. "/OFFme.lua") then
 		sampChat("{009EFF}[Tools]{ffffff} OFFme.lua можно отключить — он уже в /tools → Уведомление")
