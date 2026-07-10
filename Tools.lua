@@ -1,7 +1,7 @@
 ---@diagnostic disable: undefined-global, lowercase-global
 --[[
   Tools Menu — MoonLoader / SAMP
-  /tools — пустое меню с кнопкой закрытия
+  /tools — меню с логотипом, разделами и кнопкой закрытия
   Данные: moonloader/Tools/
 ]]
 
@@ -41,6 +41,8 @@ local UPDATE_MANIFEST_URL_JS = "https://cdn.jsdelivr.net/gh/Alex140219899/Atools
 local UPDATE_SCRIPT_URL_JS = "https://cdn.jsdelivr.net/gh/Alex140219899/Atools@main/Tools.lua"
 local SETTINGS_DEFAULT_URL = "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools/SettingsDefault.json"
 local SETTINGS_DEFAULT_URL_JS = "https://cdn.jsdelivr.net/gh/Alex140219899/Atools@main/Tools/SettingsDefault.json"
+local LOGO_URL = "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools/logo.png"
+local LOGO_URL_JS = "https://cdn.jsdelivr.net/gh/Alex140219899/Atools@main/Tools/logo.png"
 
 local function im_utf8(s)
 	return s == nil and "" or tostring(s)
@@ -67,6 +69,7 @@ end
 
 local configDirectory = get_data_dir()
 local path_settings = configDirectory .. "/Settings.json"
+local path_logo = configDirectory .. "/logo.png"
 
 local default_settings = {
 	general = {
@@ -97,7 +100,22 @@ local Menu = {
 	Window = imgui.new.bool(),
 	InstallWindow = imgui.new.bool(),
 	UpdateWindow = imgui.new.bool(),
+	sidebar = 0,
 }
+
+local SIDEBAR = {
+	{ id = "update", label = "GitHub", page = 0 },
+	{ id = "aimbot", label = "Aimbot", page = 1 },
+	{ id = "visuals", label = "Visuals", page = 2 },
+	{ id = "trigger", label = "Trigger", page = 3 },
+	{ id = "user", label = "User", page = 4 },
+	{ id = "pools", label = "Pools", page = 5 },
+	{ id = "world", label = "World", page = 6 },
+	{ id = "misc", label = "Misc", page = 7 },
+}
+
+local logo_texture = nil
+local logo_load_tried = false
 
 local UpdateUi = {
 	busy = false,
@@ -465,6 +483,7 @@ local function do_install_data_files()
 	UpdateUi.install_status = "GitHub недоступен — локальная установка…"
 	log_msg("[Tools] GitHub недоступен, ставим локальные настройки.")
 	install_local_defaults()
+	ensure_logo_asset()
 	sampChat("{009EFF}[Tools]{ffffff} Установлено локально (без GitHub). Перезагрузка…")
 	wait(700)
 	try_reload_script()
@@ -590,6 +609,41 @@ local function process_pending()
 	end
 end
 
+local function ensure_logo_asset()
+	ensure_data_dir()
+	if doesFileExist(path_logo) then
+		return true
+	end
+	for _, u in ipairs(build_urls(LOGO_URL_JS, LOGO_URL)) do
+		if select(1, download_url_to_file_sync(path_logo, u, 25)) then
+			return doesFileExist(path_logo)
+		end
+	end
+	return false
+end
+
+local function ensure_logo_texture()
+	if logo_texture or logo_load_tried then
+		return logo_texture ~= nil
+	end
+	logo_load_tried = true
+	ensure_logo_asset()
+	if not doesFileExist(path_logo) then
+		log_msg("[Tools] logo.png не найден в " .. configDirectory)
+		return false
+	end
+	local ok, tex = pcall(function()
+		imgui.SwitchContext()
+		return imgui.CreateTextureFromFile(path_logo)
+	end)
+	if ok and tex then
+		logo_texture = tex
+		return true
+	end
+	log_msg("[Tools] Не удалось загрузить logo.png")
+	return false
+end
+
 local function accent_button(label, w, h)
 	imgui.PushStyleColor(imgui.Col.Button, accent(0.85))
 	imgui.PushStyleColor(imgui.Col.ButtonHovered, accent(0.95))
@@ -617,6 +671,95 @@ local function draw_close_button()
 	end
 end
 
+local function draw_sidebar_logo(dpi, sidebar_w)
+	local logo_sz = 68 * dpi
+	local pad = math.max(8 * dpi, (sidebar_w - logo_sz) * 0.5)
+	imgui.SetCursorPosX(pad)
+	if ensure_logo_texture() then
+		imgui.Image(logo_texture, imgui.ImVec2(logo_sz, logo_sz))
+	else
+		imgui.Dummy(imgui.ImVec2(logo_sz, logo_sz))
+	end
+	imgui.Dummy(imgui.ImVec2(0, 10 * dpi))
+end
+
+local function draw_sidebar()
+	local dpi = custom_dpi
+	local w = 118 * dpi
+	imgui.PushStyleColor(imgui.Col.ChildBg, Menu._sidebar_col or imgui.ImVec4(0.055, 0.06, 0.07, 1))
+	imgui.BeginChild("##sidebar", imgui.ImVec2(w, -1), false)
+	draw_sidebar_logo(dpi, w)
+	for _, item in ipairs(SIDEBAR) do
+		local sel = Menu.sidebar == item.page
+		local pad = 8 * dpi
+		local bw, bh = w - pad * 2, 34 * dpi
+		local p = imgui.GetCursorScreenPos()
+		local dl = imgui.GetWindowDrawList()
+		if sel then
+			dl:AddRectFilled(
+				imgui.ImVec2(p.x + pad, p.y),
+				imgui.ImVec2(p.x + pad + bw, p.y + bh),
+				imgui.ColorConvertFloat4ToU32(accent(0.22)),
+				6 * dpi
+			)
+			dl:AddRectFilled(
+				imgui.ImVec2(p.x + pad, p.y + 6 * dpi),
+				imgui.ImVec2(p.x + pad + 3 * dpi, p.y + bh - 6 * dpi),
+				imgui.ColorConvertFloat4ToU32(accent(1.0)),
+				2 * dpi
+			)
+		end
+		imgui.SetCursorScreenPos(imgui.ImVec2(p.x + pad, p.y))
+		imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(0, 0, 0, 0))
+		imgui.PushStyleColor(imgui.Col.ButtonHovered, accent(0.12))
+		imgui.PushStyleColor(imgui.Col.ButtonActive, accent(0.2))
+		imgui.PushStyleColor(imgui.Col.Text, sel and accent(1.0) or imgui.ImVec4(0.62, 0.64, 0.68, 1.0))
+		if imgui.Button(im_utf8(item.label .. "##nav_" .. item.id), imgui.ImVec2(bw, bh)) then
+			Menu.sidebar = item.page
+		end
+		imgui.PopStyleColor(4)
+	end
+	imgui.EndChild()
+	imgui.PopStyleColor()
+end
+
+local function render_update_page()
+	local dpi = custom_dpi
+	imgui.TextColored(accent(0.95), im_utf8("Обновление с GitHub"))
+	imgui.Spacing()
+	imgui.Text(im_utf8("Локально: v." .. get_local_script_version()))
+	if UpdateUi.remote_script_ver ~= "" then
+		imgui.Text(im_utf8("GitHub: v." .. UpdateUi.remote_script_ver))
+	end
+	if UpdateUi.status_text ~= "" then
+		imgui.Spacing()
+		imgui.TextWrapped(im_utf8(UpdateUi.status_text))
+	end
+	if UpdateUi.changelog ~= "" then
+		imgui.Spacing()
+		imgui.TextColored(accent(1), im_utf8("Changelog"))
+		imgui.TextWrapped(im_utf8(UpdateUi.changelog))
+	end
+	imgui.Spacing()
+	if UpdateUi.busy then
+		imgui.Text(im_utf8("Идёт операция…"))
+	else
+		if accent_button("Проверить обновление##chk", -1, 36 * dpi) then
+			UpdateUi.pending_check = true
+		end
+		imgui.Spacing()
+		if accent_button("Обновить##run", -1, 36 * dpi) then
+			UpdateUi.pending_update = true
+		end
+	end
+end
+
+local function render_content()
+	if Menu.sidebar == 0 then
+		render_update_page()
+	end
+end
+
 local function register_imgui()
 	imgui.OnFrame(
 		function()
@@ -625,11 +768,19 @@ local function register_imgui()
 		function()
 			ensure_theme_once()
 			local dpi = custom_dpi
-			imgui.SetNextWindowSize(imgui.ImVec2(420 * dpi, 280 * dpi), imgui.Cond.FirstUseEver)
+			imgui.SetNextWindowSize(imgui.ImVec2(720 * dpi, 480 * dpi), imgui.Cond.FirstUseEver)
 			imgui.SetNextWindowPos(imgui.ImVec2(sizeX * 0.5, sizeY * 0.5), imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
 			local flags = imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoTitleBar + imgui.WindowFlags.NoScrollbar
 			if imgui.Begin("##tools_main_win", Menu.Window, flags) then
+				draw_sidebar()
+				imgui.SameLine()
+				imgui.BeginChild("##main_area", imgui.ImVec2(0, -1), false, imgui.WindowFlags.NoScrollbar)
 				draw_close_button()
+				imgui.SetCursorPos(imgui.ImVec2(14 * dpi, 44 * dpi))
+				imgui.BeginChild("##content", imgui.ImVec2(-14 * dpi, -14 * dpi), false)
+				render_content()
+				imgui.EndChild()
+				imgui.EndChild()
 			end
 			imgui.End()
 		end
