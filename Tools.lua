@@ -1,12 +1,12 @@
 ---@diagnostic disable: undefined-global, lowercase-global
 --[[
   Tools Menu — MoonLoader / SAMP
-  /tools — меню в стиле modern cheat UI (sidebar + subtabs + 2 columns)
+  /tools — пустое меню с кнопкой закрытия
   Данные: moonloader/Tools/
 ]]
 
 script_name("Tools Menu")
-script_description("Tools: /tools — меню с кастомизацией и обновлением с GitHub")
+script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
 script_version("1.0.1")
 
@@ -15,6 +15,18 @@ require("encoding").default = "CP1251"
 local u8 = require("encoding").UTF8
 local ffi = require("ffi")
 local imgui = require("mimgui")
+
+if not imgui.PushID then
+	imgui.PushID = function(id)
+		if type(id) == "string" then
+			imgui.PushIDStr(id)
+		elseif type(id) == "number" then
+			imgui.PushIDInt(id)
+		else
+			imgui.PushIDPtr(ffi.cast("void*", id))
+		end
+	end
+end
 
 pcall(require, "dkjson")
 
@@ -85,8 +97,6 @@ local Menu = {
 	Window = imgui.new.bool(),
 	InstallWindow = imgui.new.bool(),
 	UpdateWindow = imgui.new.bool(),
-	sidebar = 0,
-	subtab = 0,
 }
 
 local UpdateUi = {
@@ -110,43 +120,6 @@ local slider_alpha = imgui.new.float(0.98)
 local checkbox_rounded = imgui.new.bool(true)
 local checkbox_dark = imgui.new.bool(true)
 local slider_dpi = imgui.new.float(1.0)
-
---- Демо-виджеты (заглушки под будущий функционал)
-local Demo = {
-	godmode = imgui.new.bool(false),
-	no_ragdoll = imgui.new.bool(false),
-	seat_belt = imgui.new.bool(false),
-	health_val = imgui.new.int(100),
-	armor_val = imgui.new.int(100),
-	health_cb = imgui.new.bool(false),
-	speedhack = imgui.new.bool(false),
-	noclip = imgui.new.bool(false),
-	super_jump = imgui.new.bool(false),
-	freeze_pos = imgui.new.bool(false),
-	esp_player = imgui.new.bool(false),
-	esp_vehicle = imgui.new.bool(false),
-	esp_health = imgui.new.bool(false),
-	esp_box = imgui.new.bool(false),
-	esp_gun = imgui.new.bool(false),
-	col_player = imgui.new.float[3](0.35, 0.55, 1.0),
-	col_vehicle = imgui.new.float[3](1.0, 0.85, 0.2),
-	col_health = imgui.new.float[3](1.0, 0.35, 0.65),
-	col_box = imgui.new.float[3](0.2, 0.9, 1.0),
-	col_gun = imgui.new.float[3](0.3, 1.0, 0.45),
-}
-
-local SIDEBAR = {
-	{ id = "aimbot", label = "Aimbot", page = 0 },
-	{ id = "visuals", label = "Visuals", page = 1 },
-	{ id = "trigger", label = "Trigger", page = 2 },
-	{ id = "user", label = "User", page = 3 },
-	{ id = "pools", label = "Pools", page = 4 },
-	{ id = "world", label = "World", page = 5 },
-	{ id = "misc", label = "Misc", page = 6 },
-	{ id = "script", label = "Script", page = 7 },
-}
-
-local SUBTABS = { "Subtab One", "Subtab Two", "Subtab Three" }
 
 local function ensure_data_dir()
 	if data_dir_ready then
@@ -617,84 +590,6 @@ local function process_pending()
 	end
 end
 
-local function draw_logo(dl, cx, cy, sz)
-	local p1 = imgui.ImVec2(cx, cy - sz)
-	local p2 = imgui.ImVec2(cx - sz * 0.9, cy + sz * 0.75)
-	local p3 = imgui.ImVec2(cx + sz * 0.9, cy + sz * 0.75)
-	dl:AddTriangleFilled(p1, p2, p3, imgui.ColorConvertFloat4ToU32(imgui.ImVec4(0.55, 0.35, 1.0, 1.0)))
-	dl:AddTriangleFilled(
-		imgui.ImVec2(cx, cy - sz * 0.55),
-		imgui.ImVec2(cx - sz * 0.45, cy + sz * 0.2),
-		imgui.ImVec2(cx + sz * 0.45, cy + sz * 0.2),
-		imgui.ColorConvertFloat4ToU32(accent(0.95))
-	)
-end
-
-local function draw_section_title(title)
-	local dpi = custom_dpi
-	local avail = imgui.GetContentRegionAvail().x
-	local tw = imgui.CalcTextSize(im_utf8(title)).x
-	local pad = 10 * dpi
-	local line_w = math.max(20 * dpi, (avail - tw - pad * 2) * 0.5)
-	imgui.Dummy(imgui.ImVec2(0, 4 * dpi))
-	local y = imgui.GetCursorScreenPos().y + imgui.GetTextLineHeight() * 0.5
-	local x0 = imgui.GetCursorScreenPos().x
-	local dl = imgui.GetWindowDrawList()
-	dl:AddLine(
-		imgui.ImVec2(x0, y),
-		imgui.ImVec2(x0 + line_w, y),
-		imgui.ColorConvertFloat4ToU32(accent(0.55)),
-		1.0
-	)
-	imgui.SetCursorScreenPos(imgui.ImVec2(x0 + line_w + pad, imgui.GetCursorScreenPos().y))
-	imgui.TextColored(accent(0.95), im_utf8(title))
-	local x1 = x0 + line_w + pad + tw + pad
-	dl:AddLine(
-		imgui.ImVec2(x1, y),
-		imgui.ImVec2(x0 + avail, y),
-		imgui.ColorConvertFloat4ToU32(accent(0.55)),
-		1.0
-	)
-	imgui.Dummy(imgui.ImVec2(0, 8 * dpi))
-end
-
-local function row_checkbox(label, var, right)
-	local dpi = custom_dpi
-	imgui.PushID(label)
-	imgui.AlignTextToFramePadding()
-	imgui.Text(im_utf8(label))
-	if right then
-		local rw = imgui.CalcTextSize(im_utf8(right)).x
-		imgui.SameLine(imgui.GetWindowContentRegionMax().x - rw - 8 * dpi)
-		imgui.TextColored(imgui.ImVec4(0.55, 0.58, 0.65, 1.0), im_utf8(right))
-	else
-		imgui.SameLine(imgui.GetWindowContentRegionMax().x - 24 * dpi)
-		imgui.TextColored(imgui.ImVec4(0.45, 0.48, 0.55, 0.8), im_utf8("⌨"))
-	end
-	imgui.SameLine(imgui.GetWindowContentRegionMax().x - 52 * dpi)
-	imgui.Checkbox("##cb", var)
-	imgui.PopID()
-end
-
-local function row_checkbox_color(label, var, col)
-	local dpi = custom_dpi
-	imgui.PushID(label)
-	imgui.AlignTextToFramePadding()
-	imgui.Text(im_utf8(label))
-	imgui.SameLine(imgui.GetWindowContentRegionMax().x - 78 * dpi)
-	imgui.ColorEdit3("##col", col, imgui.ColorEditFlags.NoInputs + imgui.ColorEditFlags.NoLabel)
-	imgui.SameLine(imgui.GetWindowContentRegionMax().x - 52 * dpi)
-	imgui.Checkbox("##cb", var)
-	imgui.PopID()
-end
-
-local function row_slider(label, var, vmin, vmax, fmt)
-	imgui.Text(im_utf8(label))
-	imgui.SameLine()
-	imgui.SetNextItemWidth(-1)
-	imgui.SliderInt("##sl", var, vmin, vmax, fmt or "%d")
-end
-
 local function accent_button(label, w, h)
 	imgui.PushStyleColor(imgui.Col.Button, accent(0.85))
 	imgui.PushStyleColor(imgui.Col.ButtonHovered, accent(0.95))
@@ -705,253 +600,20 @@ local function accent_button(label, w, h)
 	return pressed
 end
 
-local function draw_sidebar()
+local function draw_close_button()
 	local dpi = custom_dpi
-	local w = 118 * dpi
-	imgui.PushStyleColor(imgui.Col.ChildBg, Menu._sidebar_col or imgui.ImVec4(0.055, 0.06, 0.07, 1))
-	imgui.BeginChild("##sidebar", imgui.ImVec2(w, -1), false)
-	local dl = imgui.GetWindowDrawList()
-	local cx = imgui.GetCursorScreenPos().x + w * 0.5
-	draw_logo(dl, cx, imgui.GetCursorScreenPos().y + 22 * dpi, 14 * dpi)
-	imgui.Dummy(imgui.ImVec2(0, 52 * dpi))
-	for _, item in ipairs(SIDEBAR) do
-		local sel = Menu.sidebar == item.page
-		local pad = 8 * dpi
-		local bw, bh = w - pad * 2, 34 * dpi
-		local p = imgui.GetCursorScreenPos()
-		if sel then
-			dl:AddRectFilled(
-				imgui.ImVec2(p.x + pad, p.y),
-				imgui.ImVec2(p.x + pad + bw, p.y + bh),
-				imgui.ColorConvertFloat4ToU32(accent(0.22)),
-				6 * dpi
-			)
-			dl:AddRectFilled(
-				imgui.ImVec2(p.x + pad, p.y + 6 * dpi),
-				imgui.ImVec2(p.x + pad + 3 * dpi, p.y + bh - 6 * dpi),
-				imgui.ColorConvertFloat4ToU32(accent(1.0)),
-				2 * dpi
-			)
-		end
-		imgui.SetCursorScreenPos(imgui.ImVec2(p.x + pad, p.y))
-		imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(0, 0, 0, 0))
-		imgui.PushStyleColor(imgui.Col.ButtonHovered, accent(0.12))
-		imgui.PushStyleColor(imgui.Col.ButtonActive, accent(0.2))
-		imgui.PushStyleColor(imgui.Col.Text, sel and accent(1.0) or imgui.ImVec4(0.62, 0.64, 0.68, 1.0))
-		if imgui.Button(im_utf8(item.label .. "##nav_" .. item.id), imgui.ImVec2(bw, bh)) then
-			Menu.sidebar = item.page
-			Menu.subtab = 0
-		end
-		imgui.PopStyleColor(4)
-	end
-	imgui.EndChild()
-	imgui.PopStyleColor()
-end
-
-local function draw_subtabs()
-	local dpi = custom_dpi
-	imgui.BeginChild("##subtabs", imgui.ImVec2(0, 34 * dpi), false)
-	local dl = imgui.GetWindowDrawList()
-	for i, name in ipairs(SUBTABS) do
-		local idx = i - 1
-		local sel = Menu.subtab == idx
-		if i > 1 then
-			imgui.SameLine(0, 18 * dpi)
-		end
-		imgui.PushStyleColor(imgui.Col.Text, sel and imgui.ImVec4(1, 1, 1, 1) or imgui.ImVec4(0.55, 0.57, 0.62, 1.0))
-		if imgui.Selectable(im_utf8(name .. "##st_" .. idx), sel, 0, imgui.ImVec2(0, 24 * dpi)) then
-			Menu.subtab = idx
-		end
-		if sel then
-			local mn, mx = imgui.GetItemRectMin(), imgui.GetItemRectMax()
-			dl:AddLine(
-				imgui.ImVec2(mn.x, mx.y - 1),
-				imgui.ImVec2(mx.x, mx.y - 1),
-				imgui.ColorConvertFloat4ToU32(accent(1.0)),
-				2.0
-			)
-		end
-		imgui.PopStyleColor()
-	end
-	local clock = os.date("%H:%M")
-	local cw = imgui.CalcTextSize(clock).x + 16 * dpi
-	imgui.SameLine(imgui.GetWindowContentRegionMax().x - cw)
-	local cp = imgui.GetCursorScreenPos()
-	dl:AddCircleFilled(
-		imgui.ImVec2(cp.x + 8 * dpi, cp.y + 12 * dpi),
-		10 * dpi,
-		imgui.ColorConvertFloat4ToU32(accent(0.9))
-	)
-	imgui.SetCursorScreenPos(imgui.ImVec2(cp.x + 18 * dpi, cp.y + 2 * dpi))
-	imgui.TextColored(imgui.ImVec4(1, 1, 1, 1), clock)
-	imgui.EndChild()
-	imgui.Separator()
-end
-
-local function draw_two_columns(left_fn, right_fn)
-	local avail = imgui.GetContentRegionAvail()
-	local gap = 10 * custom_dpi
-	local col_w = (avail.x - gap) * 0.5
-	imgui.BeginChild("##col_l", imgui.ImVec2(col_w, avail.y), true)
-	left_fn()
-	imgui.EndChild()
-	imgui.SameLine(0, gap)
-	imgui.BeginChild("##col_r", imgui.ImVec2(0, avail.y), true)
-	right_fn()
-	imgui.EndChild()
-end
-
-local function render_aimbot_page()
-	draw_two_columns(
-		function()
-			draw_section_title("General")
-			row_checkbox("Godmode", Demo.godmode, "L.Mouse")
-			row_checkbox("No ragdoll", Demo.no_ragdoll)
-			row_checkbox("Seat belt", Demo.seat_belt)
-			imgui.Spacing()
-			draw_section_title("Health")
-			row_slider("Health value", Demo.health_val, 0, 100, "%d")
-			row_slider("Armor value", Demo.armor_val, 0, 100, "%d")
-			row_checkbox("Health", Demo.health_cb)
-		end,
-		function()
-			draw_section_title("Movements")
-			row_checkbox("Speedhack", Demo.speedhack, "L.Mouse")
-			row_checkbox("Noclip", Demo.noclip)
-			row_checkbox("Super Jump", Demo.super_jump)
-			row_checkbox("Freeze position", Demo.freeze_pos)
-			imgui.Spacing()
-			accent_button("Suicide", -1, 32 * custom_dpi)
-		end
-	)
-end
-
-local function render_visuals_page()
-	draw_two_columns(
-		function()
-			draw_section_title("Esp")
-			row_checkbox_color("Esp Player", Demo.esp_player, Demo.col_player)
-			row_checkbox_color("Esp Vehicle", Demo.esp_vehicle, Demo.col_vehicle)
-			row_checkbox_color("Esp Health", Demo.esp_health, Demo.col_health)
-			row_checkbox_color("Esp Box", Demo.esp_box, Demo.col_box)
-			row_checkbox_color("Esp Gun", Demo.esp_gun, Demo.col_gun)
-		end,
-		function()
-			draw_section_title("Preview")
-			imgui.TextWrapped(im_utf8("Раздел Visuals — заглушка. Цвета и чекбоксы готовы для будущего ESP."))
-			imgui.Spacing()
-			imgui.TextColored(imgui.ImVec4(0.55, 0.58, 0.65, 1), im_utf8("Subtab: " .. SUBTABS[Menu.subtab + 1]))
-		end
-	)
-end
-
-local function render_placeholder_page(title, desc)
-	draw_two_columns(
-		function()
-			draw_section_title("General")
-			imgui.TextWrapped(im_utf8(desc))
-		end,
-		function()
-			draw_section_title("Options")
-			imgui.TextColored(imgui.ImVec4(0.55, 0.58, 0.65, 1), im_utf8("Модуль «" .. title .. "» — скоро."))
-		end
-	)
-end
-
-local function render_script_page()
-	if Menu.subtab == 1 then
-		draw_two_columns(
-			function()
-				draw_section_title("Theme")
-				imgui.Checkbox(im_utf8("Тёмная тема"), checkbox_dark)
-				imgui.Checkbox(im_utf8("Скругление UI"), checkbox_rounded)
-				imgui.Text(im_utf8("Акцент"))
-				imgui.ColorEdit3("##acc", accent_col)
-				imgui.Text(im_utf8("Прозрачность"))
-				imgui.SliderFloat("##alpha", slider_alpha, 0.75, 1.0, "%.2f")
-			end,
-			function()
-				draw_section_title("Interface")
-				imgui.Text(im_utf8("Масштаб UI"))
-				imgui.SliderFloat("##dpi", slider_dpi, 0.8, 1.4, "%.2f")
-				imgui.Spacing()
-				if accent_button("Сохранить##save_custom", -1, 32 * custom_dpi) then
-					apply_customization_from_bufs()
-					apply_theme_core()
-					sampChat("{009EFF}[Tools]{ffffff} Кастомизация сохранена.")
-				end
-			end
-		)
-		return
-	end
-	if Menu.subtab == 2 then
-		draw_two_columns(
-			function()
-				draw_section_title("Version")
-				imgui.Text(im_utf8("Локально: v." .. get_local_script_version()))
-				if UpdateUi.remote_script_ver ~= "" then
-					imgui.Text(im_utf8("GitHub: v." .. UpdateUi.remote_script_ver))
-				end
-				if UpdateUi.status_text ~= "" then
-					imgui.Spacing()
-					imgui.TextWrapped(im_utf8(UpdateUi.status_text))
-				end
-				if UpdateUi.changelog ~= "" then
-					imgui.Spacing()
-					imgui.TextColored(accent(1), im_utf8("Changelog"))
-					imgui.TextWrapped(im_utf8(UpdateUi.changelog))
-				end
-			end,
-			function()
-				draw_section_title("Actions")
-				if UpdateUi.busy then
-					imgui.Text(im_utf8("Идёт операция…"))
-				else
-					if accent_button("Проверить обновление##chk", -1, 34 * custom_dpi) then
-						UpdateUi.pending_check = true
-					end
-					imgui.Spacing()
-					if accent_button("Обновить##run", -1, 34 * custom_dpi) then
-						UpdateUi.pending_update = true
-					end
-				end
-			end
-		)
-		return
-	end
-	draw_two_columns(
-		function()
-			draw_section_title("Script")
-			imgui.Text(im_utf8("Tools Menu v." .. get_local_script_version()))
-			imgui.Text(im_utf8("Команда: /tools"))
-			imgui.Text(im_utf8("Данные: moonloader/Tools/"))
-		end,
-		function()
-			draw_section_title("Info")
-			imgui.TextWrapped(
-				im_utf8("Subtab Two — настройки темы.\nSubtab Three — проверка и загрузка обновлений с GitHub.")
-			)
-		end
-	)
-end
-
-local function render_content()
-	if Menu.sidebar == 0 then
-		render_aimbot_page()
-	elseif Menu.sidebar == 1 then
-		render_visuals_page()
-	elseif Menu.sidebar == 2 then
-		render_placeholder_page("Trigger", "Triggerbot и связанные настройки.")
-	elseif Menu.sidebar == 3 then
-		render_placeholder_page("User", "Профиль и пользовательские опции.")
-	elseif Menu.sidebar == 4 then
-		render_placeholder_page("Pools", "Пул объектов и кэш.")
-	elseif Menu.sidebar == 5 then
-		render_placeholder_page("World", "Мир, погода, время.")
-	elseif Menu.sidebar == 6 then
-		render_placeholder_page("Misc", "Разное.")
-	else
-		render_script_page()
+	local btn_sz = 26 * dpi
+	local pad = 8 * dpi
+	local max = imgui.GetWindowContentRegionMax()
+	imgui.SetCursorPos(imgui.ImVec2(max.x - btn_sz - pad, pad))
+	imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(0, 0, 0, 0))
+	imgui.PushStyleColor(imgui.Col.ButtonHovered, imgui.ImVec4(0.85, 0.22, 0.28, 0.9))
+	imgui.PushStyleColor(imgui.Col.ButtonActive, imgui.ImVec4(0.95, 0.15, 0.2, 1))
+	imgui.PushStyleColor(imgui.Col.Text, imgui.ImVec4(0.85, 0.88, 0.92, 1))
+	local closed = imgui.Button(im_utf8("×##tools_close"), imgui.ImVec2(btn_sz, btn_sz))
+	imgui.PopStyleColor(4)
+	if closed then
+		Menu.Window[0] = false
 	end
 end
 
@@ -963,24 +625,11 @@ local function register_imgui()
 		function()
 			ensure_theme_once()
 			local dpi = custom_dpi
-			imgui.SetNextWindowSize(imgui.ImVec2(820 * dpi, 520 * dpi), imgui.Cond.FirstUseEver)
+			imgui.SetNextWindowSize(imgui.ImVec2(420 * dpi, 280 * dpi), imgui.Cond.FirstUseEver)
 			imgui.SetNextWindowPos(imgui.ImVec2(sizeX * 0.5, sizeY * 0.5), imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
 			local flags = imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoTitleBar + imgui.WindowFlags.NoScrollbar
 			if imgui.Begin("##tools_main_win", Menu.Window, flags) then
-				draw_sidebar()
-				imgui.SameLine()
-				imgui.BeginGroup()
-				imgui.BeginChild("##main_area", imgui.ImVec2(0, -1), false, imgui.WindowFlags.NoScrollbar)
-				imgui.SetCursorPos(imgui.ImVec2(14 * dpi, 10 * dpi))
-				imgui.BeginGroup()
-				draw_subtabs()
-				imgui.SetCursorPosX(14 * dpi)
-				imgui.BeginChild("##content", imgui.ImVec2(-14 * dpi, -10 * dpi), false)
-				render_content()
-				imgui.EndChild()
-				imgui.EndGroup()
-				imgui.EndChild()
-				imgui.EndGroup()
+				draw_close_button()
 			end
 			imgui.End()
 		end
