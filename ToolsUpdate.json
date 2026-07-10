@@ -1,7 +1,7 @@
 {
-  "current_version": "1.0.5",
+  "current_version": "1.0.9",
   "update_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools.lua",
-  "update_info": "v1.0.5 — кнопки Уведомление как в OFFme: выбранные ярче (70%), остальные тусклее (20%), повторный клик снимает выбор.",
+  "update_info": "v1.0.9 — исправлен git-конфликт, кнопки Уведомление как в OFFme.",
   "data_version": "1",
   "settings_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools/SettingsDefault.json"
 }

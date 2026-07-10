@@ -8,7 +8,7 @@
 script_name("Tools Menu")
 script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
-script_version("1.0.5")
+script_version("1.0.9")
 
 require("lib.moonloader")
 require("encoding").default = "CP1251"
@@ -40,7 +40,7 @@ local sampev = require("lib.samp.events")
 
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
-local SCRIPT_VERSION_TEXT = "1.0.5"
+local SCRIPT_VERSION_TEXT = "1.0.9"
 local DATA_DIR_NAME = "Tools"
 local message_color = 0x009EFF
 
@@ -1265,7 +1265,7 @@ local function render_notify_page()
 			imgui.InputText("##offme_action_text", Offme.buf.text, 512)
 			imgui.PopItemWidth()
 			imgui.SameLine()
-			if offme_colored_button("Повтор", Offme.repeat_state and "32CD32" or "F94242", 50, imgui.ImVec2(45 * dpi, 24 * dpi)) then
+			if offme_colored_button("Повтор", Offme.repeat_state and "32CD32" or "F94242", Offme.repeat_state, imgui.ImVec2(45 * dpi, 24 * dpi)) then
 				Offme.repeat_state = not Offme.repeat_state
 			end
 			imgui.Separator()
@@ -1284,7 +1284,7 @@ local function render_notify_page()
 	if offme_colored_button(
 		Offme.script_state and "Включено" or "Выключено",
 		Offme.script_state and "32CD32" or "F94242",
-		50,
+		Offme.script_state,
 		imgui.ImVec2(-1, 28 * dpi)
 	) then
 		Offme.script_state = not Offme.script_state
@@ -1337,12 +1337,27 @@ local function render_content()
 	end
 end
 
+local function tools_apply_menu_frame(frame)
+	if not frame then
+		return
+	end
+	frame.HideCursor = false
+	frame.LockPlayer = true
+end
+
 local function register_imgui()
+	imgui.OnInitialize(function()
+		local io = imgui.GetIO()
+		io.IniFilename = nil
+		io.ConfigFlags = io.ConfigFlags + imgui.ConfigFlags.NoMouseCursorChange
+	end)
+
 	imgui.OnFrame(
 		function()
 			return Menu.Window[0]
 		end,
-		function()
+		function(player)
+			tools_apply_menu_frame(player)
 			ensure_theme_once()
 			local dpi = custom_dpi
 			imgui.SetNextWindowSize(imgui.ImVec2(760 * dpi, 540 * dpi), imgui.Cond.FirstUseEver)
@@ -1372,7 +1387,8 @@ local function register_imgui()
 		function()
 			return Menu.InstallWindow[0]
 		end,
-		function()
+		function(player)
+			tools_apply_menu_frame(player)
 			ensure_theme_once()
 			imgui.SetNextWindowPos(imgui.ImVec2(sizeX / 2, sizeY / 2), imgui.Cond.Appearing, imgui.ImVec2(0.5, 0.5))
 			if
@@ -1416,7 +1432,8 @@ local function register_imgui()
 		function()
 			return Menu.UpdateWindow[0]
 		end,
-		function()
+		function(player)
+			tools_apply_menu_frame(player)
 			ensure_theme_once()
 			imgui.SetNextWindowPos(imgui.ImVec2(sizeX / 2, sizeY / 2), imgui.Cond.Appearing, imgui.ImVec2(0.5, 0.5))
 			if
