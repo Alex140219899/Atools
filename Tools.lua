@@ -8,7 +8,7 @@
 script_name("Tools Menu")
 script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
-script_version("1.0.6")
+script_version("1.0.7")
 
 require("lib.moonloader")
 require("encoding").default = "CP1251"
@@ -40,7 +40,7 @@ local sampev = require("lib.samp.events")
 
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
-local SCRIPT_VERSION_TEXT = "1.0.6"
+local SCRIPT_VERSION_TEXT = "1.0.7"
 local DATA_DIR_NAME = "Tools"
 local message_color = 0x009EFF
 
@@ -1094,7 +1094,12 @@ local function offme_colored_button(text, hex, selected, size)
 	end
 
 	local base_a = selected and 1.0 or 0.58
-	local hr, hg, hb = selected and offme_brighten_rgb(br, bg, bb, 1.24) or offme_brighten_rgb(br, bg, bb, 1.42)
+	local hr, hg, hb
+	if selected then
+		hr, hg, hb = offme_brighten_rgb(br, bg, bb, 1.24)
+	else
+		hr, hg, hb = offme_brighten_rgb(br, bg, bb, 1.42)
+	end
 	local ar, ag, ab = offme_darken_rgb(br, bg, bb, 0.86)
 
 	local color_pushes = 4
