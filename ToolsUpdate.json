@@ -1,7 +1,7 @@
-{
-  "current_version": "1.0.3",
-  "update_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools.lua",
-  "update_info": "v1.0.3 — логотип в сайдбаре опущен ниже от верхнего края.",
-  "data_version": "1",
-  "settings_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools/SettingsDefault.json"
-}
+{
+  "current_version": "1.0.4",
+  "update_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools.lua",
+  "update_info": "v1.0.4 — надёжная проверка обновлений: main/master, обход кэша CDN, probe Tools.lua.",
+  "data_version": "1",
+  "settings_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools/SettingsDefault.json"
+}

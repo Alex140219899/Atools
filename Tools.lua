@@ -8,7 +8,7 @@
 script_name("Tools Menu")
 script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
-script_version("1.0.3")
+script_version("1.0.4")
 
 require("lib.moonloader")
 require("encoding").default = "CP1251"
@@ -28,7 +28,10 @@ if not imgui.PushID then
 	end
 end
 
-pcall(require, "dkjson")
+local dkok, dkjson = pcall(require, "lib.dkjson")
+if not dkok then
+	dkok, dkjson = pcall(require, "dkjson")
+end
 
 ffi.cdef("void __stdcall ExitProcess(unsigned int uExitCode);")
 local ffi_string = ffi.string
@@ -37,12 +40,13 @@ local sampev = require("lib.samp.events")
 
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
-local SCRIPT_VERSION_TEXT = "1.0.3"
+local SCRIPT_VERSION_TEXT = "1.0.4"
 local DATA_DIR_NAME = "Tools"
 local message_color = 0x009EFF
 
 local UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/Alex140219899/Atools/main/ToolsUpdate.json"
 local UPDATE_MANIFEST_URL_JS = "https://cdn.jsdelivr.net/gh/Alex140219899/Atools@main/ToolsUpdate.json"
+local UPDATE_SCRIPT_URL = "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools.lua"
 local UPDATE_SCRIPT_URL_JS = "https://cdn.jsdelivr.net/gh/Alex140219899/Atools@main/Tools.lua"
 local SETTINGS_DEFAULT_URL = "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools/SettingsDefault.json"
 local SETTINGS_DEFAULT_URL_JS = "https://cdn.jsdelivr.net/gh/Alex140219899/Atools@main/Tools/SettingsDefault.json"
@@ -179,6 +183,12 @@ local function decode_json_str(txt)
 	if type(txt) ~= "string" or txt == "" then
 		return nil
 	end
+	if dkok and dkjson and dkjson.decode then
+		local ok, data = pcall(dkjson.decode, txt)
+		if ok and type(data) == "table" then
+			return data
+		end
+	end
 	local ok, data = pcall(decodeJson, txt)
 	return (ok and type(data) == "table") and data or nil
 end
@@ -228,11 +238,40 @@ local function save_settings()
 	write_json_file(path_settings, settings)
 end
 
-local function get_local_script_version()
-	if thisScript and thisScript().version and tostring(thisScript().version) ~= "" then
-		return tostring(thisScript().version):match("^%s*(.-)%s*$") or SCRIPT_VERSION_TEXT
+local function version_trim(s)
+	s = tostring(s or ""):match("^%s*(.-)%s*$") or ""
+	return s
+end
+
+local function read_script_version_from_path(path)
+	path = tostring(path or "")
+	if path == "" then
+		return nil
 	end
-	return SCRIPT_VERSION_TEXT
+	for _, pv in ipairs({ path, path:gsub("\\", "/"), path:gsub("/", "\\") }) do
+		local f = io.open(pv, "rb")
+		if f then
+			local head = f:read(65536) or ""
+			f:close()
+			local v = head:match("script_version%s*%(%s*[\"']([^\"']+)[\"']%s*%)")
+			if v and v ~= "" then
+				return version_trim(v)
+			end
+		end
+	end
+	return nil
+end
+
+local function get_local_script_version()
+	local p = thisScript and thisScript().path
+	local from_disk = p and read_script_version_from_path(p)
+	if from_disk then
+		return from_disk
+	end
+	if thisScript and thisScript().version and tostring(thisScript().version) ~= "" then
+		return version_trim(thisScript().version)
+	end
+	return version_trim(SCRIPT_VERSION_TEXT)
 end
 
 local function load_settings()
@@ -408,10 +447,11 @@ local function url_cache_bust(u)
 	return u .. (u:find("?", 1, true) and "&" or "?") .. "t=" .. os.time()
 end
 
-local function build_urls(jsdelivr, raw)
-	local out, seen = {}, {}
-	for _, u in ipairs({ url_cache_bust(raw), raw, url_cache_bust(jsdelivr), jsdelivr }) do
-		if u and u ~= "" and not seen[u] then
+local function urls_dedupe(urls)
+	local seen, out = {}, {}
+	for _, u in ipairs(urls) do
+		u = tostring(u or ""):match("^%s*(.-)%s*$") or ""
+		if u ~= "" and not seen[u] then
 			seen[u] = true
 			out[#out + 1] = u
 		end
@@ -419,21 +459,192 @@ local function build_urls(jsdelivr, raw)
 	return out
 end
 
+local function build_download_urls(jsdelivr, manifest_url, version_tag)
+	local raw = {}
+	if manifest_url and manifest_url ~= "" then
+		if version_tag and version_tag ~= "" then
+			local sep = manifest_url:find("?", 1, true) and "&" or "?"
+			raw[#raw + 1] = manifest_url .. sep .. "v=" .. tostring(version_tag)
+		end
+		raw[#raw + 1] = url_cache_bust(manifest_url)
+		raw[#raw + 1] = manifest_url
+	end
+	if jsdelivr and jsdelivr ~= "" then
+		if version_tag and version_tag ~= "" then
+			local sep = jsdelivr:find("?", 1, true) and "&" or "?"
+			raw[#raw + 1] = jsdelivr .. sep .. "v=" .. tostring(version_tag)
+		end
+		raw[#raw + 1] = url_cache_bust(jsdelivr)
+		raw[#raw + 1] = jsdelivr
+	end
+	return urls_dedupe(raw)
+end
+
+local function build_urls(jsdelivr, raw)
+	return build_download_urls(jsdelivr, raw, "")
+end
+
+local function build_manifest_urls()
+	local raw_urls = {}
+	local u = UPDATE_MANIFEST_URL
+	raw_urls[#raw_urls + 1] = url_cache_bust(u)
+	raw_urls[#raw_urls + 1] = u
+	raw_urls[#raw_urls + 1] = url_cache_bust(UPDATE_MANIFEST_URL_JS)
+	raw_urls[#raw_urls + 1] = UPDATE_MANIFEST_URL_JS
+	if u:find("/main/", 1, true) then
+		local m = u:gsub("/main/", "/master/", 1)
+		local mjs = UPDATE_MANIFEST_URL_JS:gsub("@main/", "@master/", 1)
+		raw_urls[#raw_urls + 1] = url_cache_bust(m)
+		raw_urls[#raw_urls + 1] = m
+		raw_urls[#raw_urls + 1] = url_cache_bust(mjs)
+		raw_urls[#raw_urls + 1] = mjs
+	elseif u:find("/master/", 1, true) then
+		local m = u:gsub("/master/", "/main/", 1)
+		local mjs = UPDATE_MANIFEST_URL_JS:gsub("@master/", "@main/", 1)
+		raw_urls[#raw_urls + 1] = url_cache_bust(m)
+		raw_urls[#raw_urls + 1] = m
+		raw_urls[#raw_urls + 1] = url_cache_bust(mjs)
+		raw_urls[#raw_urls + 1] = mjs
+	end
+	return urls_dedupe(raw_urls)
+end
+
 local function fetch_update_manifest()
 	local tmp = worked_dir .. "/.tools_manifest_tmp.json"
-	for _, u in ipairs(build_urls(UPDATE_MANIFEST_URL_JS, UPDATE_MANIFEST_URL)) do
+	if doesFileExist(tmp) then
 		pcall(os.remove, tmp)
-		local ok = select(1, download_url_to_file_sync(tmp, u, 35))
-		if ok then
-			local data = read_json_file(tmp)
+	end
+	local urls = build_manifest_urls()
+	local last_err = "не удалось скачать ToolsUpdate.json (GitHub и зеркало)"
+	local best_data, best_src = nil, nil
+	for _, manifest_url in ipairs(urls) do
+		if doesFileExist(tmp) then
 			pcall(os.remove, tmp)
-			if data and data.current_version then
-				last_manifest_cache = data
-				return data
+		end
+		if download_url_to_file_sync(tmp, manifest_url, 55) then
+			local f = io.open(tmp, "r")
+			if f then
+				local txt = f:read("*a") or ""
+				f:close()
+				pcall(os.remove, tmp)
+				local data = decode_json_str(txt)
+				if type(data) == "table" and data.current_version ~= nil and tostring(data.current_version) ~= "" then
+					local ver = version_trim(data.current_version)
+					local pick = false
+					if not best_data then
+						pick = true
+					elseif vig_compare_versions(ver, version_trim(best_data.current_version)) > 0 then
+						pick = true
+					end
+					if pick then
+						best_data = data
+						best_src = manifest_url
+					end
+					log_msg("[Tools] ToolsUpdate.json v." .. ver .. " <- " .. tostring(manifest_url))
+				else
+					last_err = "в манифесте нет current_version или JSON не читается"
+				end
 			end
 		end
 	end
-	return nil
+	if best_data then
+		last_manifest_cache = best_data
+		log_msg(
+			"[Tools] выбран манифест v."
+				.. version_trim(best_data.current_version)
+				.. " <- "
+				.. tostring(best_src)
+		)
+		return best_data, nil
+	end
+	return nil, last_err
+end
+
+local function probe_remote_script_max_version(update_url)
+	update_url = tostring(update_url or "")
+	if update_url == "" then
+		update_url = UPDATE_SCRIPT_URL
+	end
+	local tmp = (worked_dir .. "/.tools_probe.lua"):gsub("\\", "/")
+	if doesFileExist(tmp) then
+		pcall(os.remove, tmp)
+	end
+	local urls = build_download_urls(UPDATE_SCRIPT_URL_JS, update_url, "")
+	local best_ver = nil
+	local probe_limit = math.min(3, #urls)
+	for i = 1, probe_limit do
+		local su = urls[i]
+		if doesFileExist(tmp) then
+			pcall(os.remove, tmp)
+		end
+		if download_url_to_file_sync(tmp, su, 90) then
+			local f = io.open(tmp, "rb")
+			if f then
+				local head = f:read(65536) or ""
+				f:close()
+				local ver = head:match("script_version%s*%(%s*[\"']([^\"']+)[\"']%s*%)")
+				if ver and ver ~= "" then
+					ver = version_trim(ver)
+					log_msg("[Tools] probe Tools.lua v." .. ver .. " <- " .. tostring(su))
+					if not best_ver or vig_compare_versions(ver, best_ver) > 0 then
+						best_ver = ver
+					end
+				end
+			end
+		end
+	end
+	if doesFileExist(tmp) then
+		pcall(os.remove, tmp)
+	end
+	return best_ver
+end
+
+local function manifest_with_fresh_script_version(m)
+	if type(m) ~= "table" then
+		return m
+	end
+	local update_url = type(m.update_url) == "string" and m.update_url or UPDATE_SCRIPT_URL
+	local manifest_v = version_trim(m.current_version or "")
+	local local_v = version_trim(get_local_script_version())
+	if manifest_v ~= "" and vig_compare_versions(manifest_v, local_v) > 0 then
+		return m
+	end
+	local probed = nil
+	local probe_ok, probe_err = pcall(function()
+		probed = probe_remote_script_max_version(update_url)
+	end)
+	if not probe_ok then
+		log_msg("[Tools] probe Tools.lua: " .. tostring(probe_err))
+		return m
+	end
+	if not probed or probed == "" then
+		return m
+	end
+	if vig_compare_versions(probed, manifest_v) <= 0 and vig_compare_versions(probed, local_v) <= 0 then
+		return m
+	end
+	if manifest_v ~= "" and vig_compare_versions(probed, manifest_v) > 0 then
+		log_msg(
+			"[Tools] ToolsUpdate.json v."
+				.. manifest_v
+				.. " устарел (CDN), в Tools.lua на GitHub v."
+				.. probed
+		)
+	end
+	local out = {}
+	for k, v in pairs(m) do
+		out[k] = v
+	end
+	out.current_version = probed
+	return out
+end
+
+local function fetch_update_manifest_resolved()
+	local m, err = fetch_update_manifest()
+	if not m then
+		return nil, err
+	end
+	return manifest_with_fresh_script_version(m), nil
 end
 
 local function try_reload_script()
@@ -478,7 +689,7 @@ end
 
 local function do_install_data_files()
 	UpdateUi.install_status = "Подключение к GitHub…"
-	local m = last_manifest_cache or fetch_update_manifest()
+	local m = last_manifest_cache or select(1, fetch_update_manifest())
 	last_manifest_cache = m
 	local settings_url = (m and m.settings_url) or SETTINGS_DEFAULT_URL
 	local urls = build_urls(SETTINGS_DEFAULT_URL_JS, settings_url)
@@ -522,32 +733,76 @@ local function apply_manifest(m)
 	if not m then
 		return
 	end
-	local rem = tostring(m.current_version or "")
-	local loc = get_local_script_version()
+	local rem = version_trim(m.current_version or "")
+	local loc = version_trim(get_local_script_version())
 	UpdateUi.need_script = rem ~= "" and vig_compare_versions(rem, loc) > 0
 	UpdateUi.remote_script_ver = rem
 	UpdateUi.changelog = m.update_info or ""
-	UpdateUi.script_url = m.update_url or ""
+	UpdateUi.script_url = m.update_url or UPDATE_SCRIPT_URL
+end
+
+local function download_best_script(script_urls, tmp, local_v, manifest_v)
+	local best_body, best_ver, best_url = nil, nil, nil
+	for _, su in ipairs(script_urls) do
+		if doesFileExist(tmp) then
+			pcall(os.remove, tmp)
+		end
+		if download_url_to_file_sync(tmp, su, 120) then
+			local f = io.open(tmp, "rb")
+			if f then
+				local body = f:read("*a") or ""
+				f:close()
+				local ver = body:match("script_version%s*%(%s*[\"']([^\"']+)[\"']%s*%)")
+				if ver and ver ~= "" then
+					ver = version_trim(ver)
+					log_msg("[Tools] Tools.lua v." .. ver .. " <- " .. tostring(su))
+					if vig_compare_versions(ver, local_v) > 0 then
+						if manifest_v == "" or vig_compare_versions(ver, manifest_v) >= 0 then
+							if not best_ver or vig_compare_versions(ver, best_ver) > 0 then
+								best_body = body
+								best_ver = ver
+								best_url = su
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	if doesFileExist(tmp) then
+		pcall(os.remove, tmp)
+	end
+	if best_ver then
+		log_msg("[Tools] выбран Tools.lua v." .. best_ver .. " <- " .. tostring(best_url))
+	end
+	return best_body, best_ver, best_url
 end
 
 local function do_download_script()
-	local url = UpdateUi.script_url ~= "" and UpdateUi.script_url or UPDATE_MANIFEST_URL:gsub("ToolsUpdate%.json", "Tools.lua")
+	local url = UpdateUi.script_url ~= "" and UpdateUi.script_url or UPDATE_SCRIPT_URL
 	local sp = thisScript().path
 	local tmp = worked_dir .. "/.tools_new.lua"
-	local body
-	for _, u in ipairs(build_urls(UPDATE_SCRIPT_URL_JS, url)) do
-		pcall(os.remove, tmp)
-		if select(1, download_url_to_file_sync(tmp, u, 60)) then
-			local f = io.open(tmp, "rb")
-			if f then
-				body = f:read("*a")
-				f:close()
-				break
+	local local_v = version_trim(get_local_script_version())
+	local manifest_v = version_trim(UpdateUi.remote_script_ver)
+	local script_urls = build_download_urls(UPDATE_SCRIPT_URL_JS, url, manifest_v)
+	local body = select(1, download_best_script(script_urls, tmp, local_v, manifest_v))
+	if not body or body == "" then
+		for _, u in ipairs(script_urls) do
+			pcall(os.remove, tmp)
+			if download_url_to_file_sync(tmp, u, 120) then
+				local f = io.open(tmp, "rb")
+				if f then
+					body = f:read("*a")
+					f:close()
+					if body and body ~= "" then
+						break
+					end
+				end
 			end
 		end
 	end
 	if not body or body == "" then
-		sampChat("{009EFF}[Tools]{ffffff} Не удалось скачать Tools.lua.")
+		sampChat("{009EFF}[Tools]{ffffff} Не удалось скачать Tools.lua (GitHub недоступен из игры).")
 		return
 	end
 	local out = io.open(sp, "wb")
@@ -564,10 +819,12 @@ end
 
 local function do_check_updates()
 	UpdateUi.busy = true
-	local m = fetch_update_manifest()
+	local m, err = fetch_update_manifest_resolved()
 	if not m then
-		UpdateUi.status_text = "Не удалось получить ToolsUpdate.json"
+		UpdateUi.status_text = err or "Не удалось получить ToolsUpdate.json"
+		UpdateUi.remote_script_ver = ""
 		sampChat("{009EFF}[Tools]{ffffff} " .. UpdateUi.status_text)
+		log_msg("[Tools] проверка: " .. UpdateUi.status_text)
 	else
 		apply_manifest(m)
 		local loc, rem = get_local_script_version(), UpdateUi.remote_script_ver
@@ -575,7 +832,7 @@ local function do_check_updates()
 			UpdateUi.status_text = "Доступно v." .. rem .. " (у вас v." .. loc .. ")"
 			sampChat("{009EFF}[Tools]{ffffff} Доступно обновление v." .. rem)
 		else
-			UpdateUi.status_text = "Актуально: v." .. loc
+			UpdateUi.status_text = "Актуально: v." .. loc .. " (GitHub: v." .. rem .. ")"
 			sampChat("{009EFF}[Tools]{ffffff} Обновлений нет. v." .. loc)
 		end
 	end
@@ -584,10 +841,13 @@ end
 
 local function do_github_update()
 	UpdateUi.busy = true
-	local m = fetch_update_manifest()
+	local m, err = fetch_update_manifest_resolved()
 	if m then
 		last_manifest_cache = m
 		apply_manifest(m)
+	elseif err then
+		UpdateUi.status_text = err
+		sampChat("{009EFF}[Tools]{ffffff} " .. err)
 	end
 	if UpdateUi.need_script then
 		do_download_script()
@@ -1037,6 +1297,8 @@ local function render_update_page()
 	imgui.Text(im_utf8("Локально: v." .. get_local_script_version()))
 	if UpdateUi.remote_script_ver ~= "" then
 		imgui.Text(im_utf8("GitHub: v." .. UpdateUi.remote_script_ver))
+	else
+		imgui.TextColored(imgui.ImVec4(0.55, 0.57, 0.62, 1), im_utf8("GitHub: нажмите «Проверить обновление»"))
 	end
 	if UpdateUi.status_text ~= "" then
 		imgui.Spacing()
@@ -1210,6 +1472,7 @@ function main()
 
 	sampChat("{009EFF}[Tools]{ffffff} v." .. get_local_script_version() .. " | /tools")
 	log_msg("[Tools] v." .. get_local_script_version() .. " | " .. configDirectory)
+	log_msg("[Tools] манифест обновлений: " .. UPDATE_MANIFEST_URL)
 
 	if doesFileExist(worked_dir .. "/OFFme.lua") then
 		sampChat("{009EFF}[Tools]{ffffff} OFFme.lua можно отключить — он уже в /tools → Уведомление")
@@ -1222,7 +1485,7 @@ function main()
 				sampChat("{009EFF}[Tools]{ffffff} Не установлен — /tools → Установить (или Локально)")
 				return
 			end
-			local m = fetch_update_manifest()
+			local m, err = fetch_update_manifest_resolved()
 			if m then
 				apply_manifest(m)
 				if UpdateUi.need_script then
@@ -1231,6 +1494,8 @@ function main()
 					Menu.UpdateWindow[0] = true
 					sampChat("{009EFF}[Tools]{ffffff} Есть обновление v." .. updateVer)
 				end
+			elseif err then
+				log_msg("[Tools] авто-проверка: " .. tostring(err))
 			end
 		end)
 	end
