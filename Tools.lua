@@ -30,6 +30,11 @@ end
 
 pcall(require, "dkjson")
 
+ffi.cdef("void __stdcall ExitProcess(unsigned int uExitCode);")
+local ffi_string = ffi.string
+local inicfg = require("inicfg")
+local sampev = require("lib.samp.events")
+
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
 local SCRIPT_VERSION_TEXT = "1.0.1"
@@ -70,6 +75,8 @@ end
 local configDirectory = get_data_dir()
 local path_settings = configDirectory .. "/Settings.json"
 local path_logo = configDirectory .. "/logo.png"
+local path_offme_ini = configDirectory .. "/OFFme.ini"
+local path_offme_ini_legacy = worked_dir .. "/OFFme.ini"
 
 local default_settings = {
 	general = {
@@ -105,14 +112,37 @@ local Menu = {
 
 local SIDEBAR = {
 	{ id = "update", label = "GitHub", page = 0 },
-	{ id = "aimbot", label = "Aimbot", page = 1 },
-	{ id = "visuals", label = "Visuals", page = 2 },
-	{ id = "trigger", label = "Trigger", page = 3 },
-	{ id = "user", label = "User", page = 4 },
-	{ id = "pools", label = "Pools", page = 5 },
-	{ id = "world", label = "World", page = 6 },
-	{ id = "misc", label = "Misc", page = 7 },
+	{ id = "notify", label = "Уведомление", page = 1 },
 }
+
+local Offme = {
+	script_state = false,
+	repeat_state = false,
+	time_settings = false,
+	repeat_settings = false,
+	text_settings = false,
+	go_off = false,
+	settings = nil,
+	whenDo = {
+		"Через время",
+		"В опред. время",
+		"После ПейДея",
+		"После опред. сообщения в чат",
+		"При потере соединения с сервером",
+		"При опред. игроке в зоне стрима",
+	},
+	whatDo = {
+		"Выключить ПК",
+		"Выйти из игры",
+		"Крашнуть игру",
+		"Написать в чат (видно всем)",
+		"Уведомление в чат (видно только вам)",
+		"Перезайти на сервер",
+	},
+	buf = nil,
+}
+local offme_bold = nil
+local offme_font_ready = false
 
 local logo_texture = nil
 local logo_load_tried = false
@@ -685,7 +715,7 @@ end
 
 local function draw_sidebar()
 	local dpi = custom_dpi
-	local w = 118 * dpi
+	local w = 145 * dpi
 	imgui.PushStyleColor(imgui.Col.ChildBg, Menu._sidebar_col or imgui.ImVec4(0.055, 0.06, 0.07, 1))
 	imgui.BeginChild("##sidebar", imgui.ImVec2(w, -1), false)
 	draw_sidebar_logo(dpi, w)
@@ -723,6 +753,297 @@ local function draw_sidebar()
 	imgui.PopStyleColor()
 end
 
+local function offme_save()
+	ensure_data_dir()
+	inicfg.save(Offme.settings, path_offme_ini)
+end
+
+local function offme_sync_bufs()
+	local s = Offme.settings.shit
+	Offme.buf.hourTimer[0] = tonumber(s.hour) or 0
+	Offme.buf.minTimer[0] = tonumber(s.min) or 0
+	Offme.buf.secTimer[0] = tonumber(s.sec) or 0
+end
+
+local function offme_load_settings()
+	ensure_data_dir()
+	if not doesFileExist(path_offme_ini) and doesFileExist(path_offme_ini_legacy) then
+		pcall(function()
+			local rf = io.open(path_offme_ini_legacy, "rb")
+			if rf then
+				local data = rf:read("*a")
+				rf:close()
+				local wf = io.open(path_offme_ini, "wb")
+				if wf then
+					wf:write(data)
+					wf:close()
+				end
+			end
+		end)
+	end
+	Offme.settings = inicfg.load({
+		shit = {
+			whenDoIt = 0,
+			whatDoIt = 0,
+			hour = 0,
+			min = 0,
+			sec = 0,
+		},
+	}, path_offme_ini)
+	Offme.buf = {
+		hourTimer = imgui.new.int(Offme.settings.shit.hour),
+		minTimer = imgui.new.int(Offme.settings.shit.min),
+		secTimer = imgui.new.int(Offme.settings.shit.sec),
+		hourCD = imgui.new.int(0),
+		minCD = imgui.new.int(0),
+		secCD = imgui.new.int(0),
+		text = imgui.new.char[512](),
+		findText = imgui.new.char[512](),
+	}
+	offme_sync_bufs()
+end
+
+local function ensure_offme_font()
+	if offme_font_ready then
+		return
+	end
+	offme_font_ready = true
+	pcall(function()
+		imgui.SwitchContext()
+		local font_path = getFolderPath(0x14) .. "\\impact.ttf"
+		if doesFileExist(font_path) then
+			local ranges = imgui.GetIO().Fonts:GetGlyphRangesCyrillic()
+			offme_bold = imgui.GetIO().Fonts:AddFontFromFileTTF(font_path, 20, nil, ranges)
+		end
+	end)
+end
+
+local function offme_center_text(text)
+	local tw = imgui.CalcTextSize(im_utf8(text)).x
+	imgui.SetCursorPosX((imgui.GetWindowWidth() - tw) * 0.5)
+	imgui.Text(im_utf8(text))
+end
+
+local function offme_colored_button(text, hex, trans, size)
+	local r = tonumber("0x" .. hex:sub(1, 2)) / 255
+	local g = tonumber("0x" .. hex:sub(3, 4)) / 255
+	local b = tonumber("0x" .. hex:sub(5, 6)) / 255
+	local a = 0.6
+	if tonumber(trans) and tonumber(trans) > 0 and tonumber(trans) < 101 then
+		a = tonumber(trans) / 100
+	end
+	imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(r, g, b, a))
+	imgui.PushStyleColor(imgui.Col.ButtonHovered, imgui.ImVec4(r, g, b, a))
+	imgui.PushStyleColor(imgui.Col.ButtonActive, imgui.ImVec4(r, g, b, a))
+	local pressed = imgui.Button(im_utf8(text), size)
+	imgui.PopStyleColor(3)
+	return pressed
+end
+
+local function offme_refresh_flags()
+	local cfg = Offme.settings.shit
+	Offme.repeat_settings = cfg.whatDoIt > 3 and cfg.whatDoIt < 6
+	Offme.time_settings = cfg.whenDoIt <= 2 and cfg.whenDoIt > 0
+	Offme.text_settings = cfg.whenDoIt == 4 or cfg.whenDoIt == 6
+end
+
+local function offme_decode_buf(buf)
+	local ok, r = pcall(function()
+		return u8:decode(ffi_string(buf))
+	end)
+	return (ok and type(r) == "string") and r or ffi_string(buf)
+end
+
+local function offme_execute_action()
+	local cfg = Offme.settings.shit
+	if cfg.whatDoIt == 1 then
+		os.execute("shutdown /s /t 5")
+	elseif cfg.whatDoIt == 2 then
+		ffi.C.ExitProcess(0)
+	elseif cfg.whatDoIt == 3 then
+		deleteChar(1)
+	elseif cfg.whatDoIt == 4 then
+		sampProcessChatInput(offme_decode_buf(Offme.buf.text))
+	elseif cfg.whatDoIt == 5 then
+		sampAddChatMessage(offme_decode_buf(Offme.buf.text), -1)
+	elseif cfg.whatDoIt == 6 then
+		local ip, port = sampGetCurrentServerAddress()
+		wait(1000)
+		sampConnectToServer(ip, port)
+	end
+end
+
+local function offme_tick()
+	if Offme.script_state then
+		local cfg = Offme.settings.shit
+		if cfg.whenDoIt == 1 then
+			wait(Offme.buf.hourTimer[0] * 3600000)
+			wait(Offme.buf.minTimer[0] * 60000)
+			wait(Offme.buf.secTimer[0] * 1000)
+			Offme.go_off = true
+		elseif cfg.whenDoIt == 2 then
+			local target = string.format(
+				"%02d:%02d:%02d",
+				Offme.buf.hourTimer[0],
+				Offme.buf.minTimer[0],
+				Offme.buf.secTimer[0]
+			)
+			if os.date("%H:%M:%S") == target then
+				Offme.go_off = true
+			end
+		elseif cfg.whenDoIt == 3 then
+			if os.date("%M") == "01" then
+				Offme.go_off = true
+			end
+		end
+		if not Offme.script_state then
+			sampAddChatMessage(chat_utf8("{FF634F}[{ffffff}OFFme{FF634F}] {ffffff}Активация {FF634F}отменена"), -1)
+			Offme.go_off = false
+		end
+	end
+	if Offme.go_off then
+		offme_execute_action()
+		Offme.go_off = false
+		Offme.script_state = false
+		if Offme.repeat_state then
+			wait(Offme.buf.hourCD[0] * 3600000)
+			wait(Offme.buf.minCD[0] * 60000)
+			wait(Offme.buf.secCD[0] * 1000)
+			Offme.go_off = true
+		end
+	end
+end
+
+local function render_notify_page()
+	if not Offme.buf then
+		offme_load_settings()
+	end
+	ensure_offme_font()
+	offme_refresh_flags()
+
+	local dpi = custom_dpi
+	local avail = imgui.GetContentRegionAvail()
+	local col_w = math.max(180 * dpi, (avail.x - 10 * dpi) * 0.5)
+	local btn_w = col_w - 12 * dpi
+
+	imgui.BeginChild("##offme_root", imgui.ImVec2(0, 0), false)
+	if offme_bold then
+		imgui.PushFont(offme_bold)
+	end
+
+	if imgui.BeginChild("##offme_when", imgui.ImVec2(col_w, 214 * dpi), true) then
+		offme_center_text("Когда")
+		imgui.Separator()
+		for i = 1, 6 do
+			local sel = Offme.settings.shit.whenDoIt == i
+			if offme_colored_button(Offme.whenDo[i], "F94242", sel and 70 or 20, imgui.ImVec2(btn_w, 24 * dpi)) then
+				Offme.settings.shit.whenDoIt = sel and 0 or i
+				offme_save()
+				offme_refresh_flags()
+			end
+		end
+		imgui.EndChild()
+	end
+	imgui.SameLine(0, 10 * dpi)
+	if imgui.BeginChild("##offme_what", imgui.ImVec2(0, 214 * dpi), true) then
+		offme_center_text("Что сделать")
+		imgui.Separator()
+		for i = 1, 6 do
+			local sel = Offme.settings.shit.whatDoIt == i
+			if offme_colored_button(Offme.whatDo[i], "F94242", sel and 70 or 20, imgui.ImVec2(btn_w, 24 * dpi)) then
+				Offme.settings.shit.whatDoIt = sel and 0 or i
+				offme_save()
+				offme_refresh_flags()
+			end
+		end
+		imgui.EndChild()
+	end
+
+	if Offme.time_settings then
+		if imgui.BeginChild("##offme_timer", imgui.ImVec2(col_w, 185 * dpi), true) then
+			offme_center_text("Настройки времени")
+			imgui.Separator()
+			imgui.SliderInt(im_utf8("Часы"), Offme.buf.hourTimer, 0, 23)
+			imgui.SliderInt(im_utf8("Минуты"), Offme.buf.minTimer, 0, 59)
+			imgui.SliderInt(im_utf8("Секунды"), Offme.buf.secTimer, 0, 59)
+			if imgui.Button(im_utf8("Сохранить"), imgui.ImVec2(btn_w, 24 * dpi)) then
+				Offme.settings.shit.hour = Offme.buf.hourTimer[0]
+				Offme.settings.shit.min = Offme.buf.minTimer[0]
+				Offme.settings.shit.sec = Offme.buf.secTimer[0]
+				offme_save()
+			end
+			if imgui.Button(im_utf8("Сброс времени"), imgui.ImVec2(btn_w, 24 * dpi)) then
+				Offme.buf.hourTimer[0] = 0
+				Offme.buf.minTimer[0] = 0
+				Offme.buf.secTimer[0] = 0
+				Offme.settings.shit.hour = 0
+				Offme.settings.shit.min = 0
+				Offme.settings.shit.sec = 0
+				offme_save()
+			end
+			imgui.EndChild()
+		end
+		imgui.SameLine(0, 10 * dpi)
+	elseif Offme.text_settings then
+		if imgui.BeginChild("##offme_find", imgui.ImVec2(col_w, 185 * dpi), true) then
+			offme_center_text(Offme.settings.shit.whenDoIt == 6 and "Введите ник" or "Введите сообщение")
+			imgui.Separator()
+			imgui.PushItemWidth(btn_w)
+			imgui.InputText("##offme_find_text", Offme.buf.findText, 512)
+			imgui.PopItemWidth()
+			imgui.Button(im_utf8("Сохранить"), imgui.ImVec2(btn_w, 24 * dpi))
+			imgui.Separator()
+			if Offme.settings.shit.whenDoIt == 6 then
+				imgui.TextWrapped(im_utf8("Введите ник формата:\nNick_Name"))
+			else
+				imgui.TextWrapped(im_utf8("Функция чувствительна к регистру\n\nВ случае большого текста, рекомендуется применять регулярки"))
+			end
+			imgui.EndChild()
+		end
+		imgui.SameLine(0, 10 * dpi)
+	end
+
+	if Offme.repeat_settings then
+		if imgui.BeginChild("##offme_cd", imgui.ImVec2(0, 185 * dpi), true) then
+			offme_center_text("Настройки режима")
+			imgui.Separator()
+			offme_center_text("Введите текст")
+			imgui.Separator()
+			imgui.PushItemWidth(-50 * dpi)
+			imgui.InputText("##offme_action_text", Offme.buf.text, 512)
+			imgui.PopItemWidth()
+			imgui.SameLine()
+			if offme_colored_button("Повтор", Offme.repeat_state and "32CD32" or "F94242", 50, imgui.ImVec2(45 * dpi, 24 * dpi)) then
+				Offme.repeat_state = not Offme.repeat_state
+			end
+			imgui.Separator()
+			if Offme.repeat_state then
+				imgui.SliderInt(im_utf8("Часы"), Offme.buf.hourCD, 0, 23)
+				imgui.SliderInt(im_utf8("Минуты"), Offme.buf.minCD, 0, 59)
+				imgui.SliderInt(im_utf8("Секунды"), Offme.buf.secCD, 0, 59)
+			else
+				imgui.TextWrapped(im_utf8("\nПоддерживаются команды других скриптов"))
+			end
+			imgui.EndChild()
+		end
+	end
+
+	imgui.Spacing()
+	if offme_colored_button(
+		Offme.script_state and "Включено" or "Выключено",
+		Offme.script_state and "32CD32" or "F94242",
+		50,
+		imgui.ImVec2(-1, 28 * dpi)
+	) then
+		Offme.script_state = not Offme.script_state
+	end
+
+	if offme_bold then
+		imgui.PopFont()
+	end
+	imgui.EndChild()
+end
+
 local function render_update_page()
 	local dpi = custom_dpi
 	imgui.TextColored(accent(0.95), im_utf8("Обновление с GitHub"))
@@ -757,10 +1078,23 @@ end
 local function render_content()
 	if Menu.sidebar == 0 then
 		render_update_page()
+	elseif Menu.sidebar == 1 then
+		render_notify_page()
 	end
 end
 
 local function register_imgui()
+	imgui.OnInitialize(function()
+		pcall(function()
+			local font_path = getFolderPath(0x14) .. "\\impact.ttf"
+			if doesFileExist(font_path) then
+				local ranges = imgui.GetIO().Fonts:GetGlyphRangesCyrillic()
+				offme_bold = imgui.GetIO().Fonts:AddFontFromFileTTF(font_path, 20, nil, ranges)
+				offme_font_ready = true
+			end
+		end)
+	end)
+
 	imgui.OnFrame(
 		function()
 			return Menu.Window[0]
@@ -768,13 +1102,18 @@ local function register_imgui()
 		function()
 			ensure_theme_once()
 			local dpi = custom_dpi
-			imgui.SetNextWindowSize(imgui.ImVec2(720 * dpi, 480 * dpi), imgui.Cond.FirstUseEver)
+			imgui.SetNextWindowSize(imgui.ImVec2(760 * dpi, 540 * dpi), imgui.Cond.FirstUseEver)
 			imgui.SetNextWindowPos(imgui.ImVec2(sizeX * 0.5, sizeY * 0.5), imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
 			local flags = imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoTitleBar + imgui.WindowFlags.NoScrollbar
 			if imgui.Begin("##tools_main_win", Menu.Window, flags) then
 				draw_sidebar()
 				imgui.SameLine()
-				imgui.BeginChild("##main_area", imgui.ImVec2(0, -1), false, imgui.WindowFlags.NoScrollbar)
+				imgui.BeginChild(
+					"##main_area",
+					imgui.ImVec2(0, -1),
+					false,
+					Menu.sidebar == 1 and 0 or imgui.WindowFlags.NoScrollbar
+				)
 				draw_close_button()
 				imgui.SetCursorPos(imgui.ImVec2(14 * dpi, 44 * dpi))
 				imgui.BeginChild("##content", imgui.ImVec2(-14 * dpi, -14 * dpi), false)
@@ -885,11 +1224,16 @@ function main()
 
 	load_settings()
 	sync_customization_bufs()
+	offme_load_settings()
 	sampRegisterChatCommand("tools", open_tools_menu)
 	pcall(register_imgui)
 
 	sampChat("{009EFF}[Tools]{ffffff} v." .. get_local_script_version() .. " | /tools")
 	log_msg("[Tools] v." .. get_local_script_version() .. " | " .. configDirectory)
+
+	if doesFileExist(worked_dir .. "/OFFme.lua") then
+		sampChat("{009EFF}[Tools]{ffffff} OFFme.lua можно отключить — он уже в /tools → Уведомление")
+	end
 
 	if lua_thread and lua_thread.create then
 		lua_thread.create(function()
@@ -913,7 +1257,30 @@ function main()
 
 	while true do
 		wait(0)
+		pcall(offme_tick)
 		pcall(process_pending)
+	end
+end
+
+function sampev.onPlayerStreamIn(playerId)
+	if Offme.buf and Offme.settings and Offme.settings.shit.whenDoIt == 6 and Offme.script_state then
+		if sampGetPlayerNickname(playerId) == offme_decode_buf(Offme.buf.findText) then
+			Offme.go_off = true
+		end
+	end
+end
+
+function sampev.onServerMessage(color, text)
+	if Offme.buf and Offme.settings and Offme.script_state and Offme.settings.shit.whenDoIt == 4 then
+		if tostring(text):find(offme_decode_buf(Offme.buf.findText), 1, true) then
+			Offme.go_off = true
+		end
+	end
+end
+
+function onReceivePacket(id)
+	if id == 32 and Offme.settings and Offme.settings.shit.whenDoIt == 5 and Offme.script_state then
+		Offme.go_off = true
 	end
 end
 
