@@ -1,0 +1,17 @@
+{
+  "general": {
+    "version": "1.0.0",
+    "installed": true,
+    "data_version": "1",
+    "custom_dpi": 1.0,
+    "accent_r": 0.35,
+    "accent_g": 0.55,
+    "accent_b": 1.0,
+    "window_alpha": 0.98,
+    "rounded_ui": true,
+    "dark_theme": true
+  },
+  "windows_pos": {
+    "main_menu": { "x": 0, "y": 0 }
+  }
+}
