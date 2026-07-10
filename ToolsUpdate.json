@@ -1,7 +1,7 @@
 {
-  "current_version": "1.0.1",
+  "current_version": "1.0.2",
   "update_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools.lua",
-  "update_info": "v1.0.1 — новый UI как на скрине, исправлена установка (локальный fallback).",
+  "update_info": "v1.0.2 — разделы GitHub и Уведомление (OFFme), логотип, крестик закрытия, яркие кнопки с hover, фикс краша.",
   "data_version": "1",
   "settings_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools/SettingsDefault.json"
 }

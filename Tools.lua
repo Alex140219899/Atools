@@ -8,7 +8,7 @@
 script_name("Tools Menu")
 script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
-script_version("1.0.1")
+script_version("1.0.2")
 
 require("lib.moonloader")
 require("encoding").default = "CP1251"
@@ -37,7 +37,7 @@ local sampev = require("lib.samp.events")
 
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
-local SCRIPT_VERSION_TEXT = "1.0.1"
+local SCRIPT_VERSION_TEXT = "1.0.2"
 local DATA_DIR_NAME = "Tools"
 local message_color = 0x009EFF
 
@@ -141,8 +141,6 @@ local Offme = {
 	},
 	buf = nil,
 }
-local offme_bold = nil
-local offme_font_ready = false
 
 local logo_texture = nil
 local logo_load_tried = false
@@ -325,8 +323,8 @@ local function apply_theme_core()
 	s.Colors[imgui.Col.FrameBgHovered] = dark and imgui.ImVec4(0.16, 0.17, 0.2, a) or imgui.ImVec4(0.84, 0.86, 0.89, a)
 	s.Colors[imgui.Col.FrameBgActive] = dark and imgui.ImVec4(0.18, 0.19, 0.23, a) or imgui.ImVec4(0.8, 0.82, 0.86, a)
 	s.Colors[imgui.Col.Button] = frame
-	s.Colors[imgui.Col.ButtonHovered] = accent(0.35)
-	s.Colors[imgui.Col.ButtonActive] = accent(0.55)
+	s.Colors[imgui.Col.ButtonHovered] = accent(0.55)
+	s.Colors[imgui.Col.ButtonActive] = accent(0.75)
 	s.Colors[imgui.Col.Header] = accent(0.18)
 	s.Colors[imgui.Col.HeaderHovered] = accent(0.28)
 	s.Colors[imgui.Col.HeaderActive] = accent(0.38)
@@ -675,8 +673,8 @@ local function ensure_logo_texture()
 end
 
 local function accent_button(label, w, h)
-	imgui.PushStyleColor(imgui.Col.Button, accent(0.85))
-	imgui.PushStyleColor(imgui.Col.ButtonHovered, accent(0.95))
+	imgui.PushStyleColor(imgui.Col.Button, accent(0.9))
+	imgui.PushStyleColor(imgui.Col.ButtonHovered, accent(1.0))
 	imgui.PushStyleColor(imgui.Col.ButtonActive, accent(1.0))
 	imgui.PushStyleColor(imgui.Col.Text, imgui.ImVec4(1, 1, 1, 1))
 	local pressed = imgui.Button(im_utf8(label), imgui.ImVec2(w, h))
@@ -741,9 +739,9 @@ local function draw_sidebar()
 		end
 		imgui.SetCursorScreenPos(imgui.ImVec2(p.x + pad, p.y))
 		imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(0, 0, 0, 0))
-		imgui.PushStyleColor(imgui.Col.ButtonHovered, accent(0.12))
-		imgui.PushStyleColor(imgui.Col.ButtonActive, accent(0.2))
-		imgui.PushStyleColor(imgui.Col.Text, sel and accent(1.0) or imgui.ImVec4(0.62, 0.64, 0.68, 1.0))
+		imgui.PushStyleColor(imgui.Col.ButtonHovered, accent(0.38))
+		imgui.PushStyleColor(imgui.Col.ButtonActive, accent(0.55))
+		imgui.PushStyleColor(imgui.Col.Text, sel and accent(1.0) or imgui.ImVec4(0.72, 0.74, 0.78, 1.0))
 		if imgui.Button(im_utf8(item.label .. "##nav_" .. item.id), imgui.ImVec2(bw, bh)) then
 			Menu.sidebar = item.page
 		end
@@ -803,40 +801,35 @@ local function offme_load_settings()
 	offme_sync_bufs()
 end
 
-local function ensure_offme_font()
-	if offme_font_ready then
-		return
-	end
-	offme_font_ready = true
-	pcall(function()
-		imgui.SwitchContext()
-		local font_path = getFolderPath(0x14) .. "\\impact.ttf"
-		if doesFileExist(font_path) then
-			local ranges = imgui.GetIO().Fonts:GetGlyphRangesCyrillic()
-			offme_bold = imgui.GetIO().Fonts:AddFontFromFileTTF(font_path, 20, nil, ranges)
-		end
-	end)
-end
-
 local function offme_center_text(text)
 	local tw = imgui.CalcTextSize(im_utf8(text)).x
 	imgui.SetCursorPosX((imgui.GetWindowWidth() - tw) * 0.5)
 	imgui.Text(im_utf8(text))
 end
 
-local function offme_colored_button(text, hex, trans, size)
+local function offme_rgb_from_hex(hex)
 	local r = tonumber("0x" .. hex:sub(1, 2)) / 255
 	local g = tonumber("0x" .. hex:sub(3, 4)) / 255
 	local b = tonumber("0x" .. hex:sub(5, 6)) / 255
-	local a = 0.6
-	if tonumber(trans) and tonumber(trans) > 0 and tonumber(trans) < 101 then
-		a = tonumber(trans) / 100
-	end
-	imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(r, g, b, a))
-	imgui.PushStyleColor(imgui.Col.ButtonHovered, imgui.ImVec4(r, g, b, a))
-	imgui.PushStyleColor(imgui.Col.ButtonActive, imgui.ImVec4(r, g, b, a))
+	return r, g, b
+end
+
+local function offme_brighten_rgb(r, g, b, mul)
+	return math.min(1, r * mul), math.min(1, g * mul), math.min(1, b * mul)
+end
+
+local function offme_colored_button(text, hex, trans, size)
+	local r, g, b = offme_rgb_from_hex(hex)
+	local selected = tonumber(trans) and tonumber(trans) >= 50
+	local base_a = selected and 0.98 or 0.78
+	local hr, hg, hb = offme_brighten_rgb(r, g, b, 1.28)
+	local ar, ag, ab = offme_brighten_rgb(r, g, b, 1.12)
+	imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(r, g, b, base_a))
+	imgui.PushStyleColor(imgui.Col.ButtonHovered, imgui.ImVec4(hr, hg, hb, 1.0))
+	imgui.PushStyleColor(imgui.Col.ButtonActive, imgui.ImVec4(ar, ag, ab, 1.0))
+	imgui.PushStyleColor(imgui.Col.Text, imgui.ImVec4(1, 1, 1, 1))
 	local pressed = imgui.Button(im_utf8(text), size)
-	imgui.PopStyleColor(3)
+	imgui.PopStyleColor(4)
 	return pressed
 end
 
@@ -918,18 +911,14 @@ local function render_notify_page()
 	if not Offme.buf then
 		offme_load_settings()
 	end
-	ensure_offme_font()
 	offme_refresh_flags()
 
 	local dpi = custom_dpi
 	local avail = imgui.GetContentRegionAvail()
-	local col_w = math.max(180 * dpi, (avail.x - 10 * dpi) * 0.5)
+	local gap = 10 * dpi
+	local col_w = math.max(180 * dpi, (avail.x - gap) * 0.5)
+	local col2_w = math.max(180 * dpi, avail.x - col_w - gap)
 	local btn_w = col_w - 12 * dpi
-
-	imgui.BeginChild("##offme_root", imgui.ImVec2(0, 0), false)
-	if offme_bold then
-		imgui.PushFont(offme_bold)
-	end
 
 	if imgui.BeginChild("##offme_when", imgui.ImVec2(col_w, 214 * dpi), true) then
 		offme_center_text("Когда")
@@ -944,8 +933,8 @@ local function render_notify_page()
 		end
 		imgui.EndChild()
 	end
-	imgui.SameLine(0, 10 * dpi)
-	if imgui.BeginChild("##offme_what", imgui.ImVec2(0, 214 * dpi), true) then
+	imgui.SameLine(0, gap)
+	if imgui.BeginChild("##offme_what", imgui.ImVec2(col2_w, 214 * dpi), true) then
 		offme_center_text("Что сделать")
 		imgui.Separator()
 		for i = 1, 6 do
@@ -983,7 +972,7 @@ local function render_notify_page()
 			end
 			imgui.EndChild()
 		end
-		imgui.SameLine(0, 10 * dpi)
+		imgui.SameLine(0, gap)
 	elseif Offme.text_settings then
 		if imgui.BeginChild("##offme_find", imgui.ImVec2(col_w, 185 * dpi), true) then
 			offme_center_text(Offme.settings.shit.whenDoIt == 6 and "Введите ник" or "Введите сообщение")
@@ -1000,16 +989,16 @@ local function render_notify_page()
 			end
 			imgui.EndChild()
 		end
-		imgui.SameLine(0, 10 * dpi)
+		imgui.SameLine(0, gap)
 	end
 
 	if Offme.repeat_settings then
-		if imgui.BeginChild("##offme_cd", imgui.ImVec2(0, 185 * dpi), true) then
+		if imgui.BeginChild("##offme_cd", imgui.ImVec2(col2_w, 185 * dpi), true) then
 			offme_center_text("Настройки режима")
 			imgui.Separator()
 			offme_center_text("Введите текст")
 			imgui.Separator()
-			imgui.PushItemWidth(-50 * dpi)
+			imgui.PushItemWidth(col2_w - 58 * dpi)
 			imgui.InputText("##offme_action_text", Offme.buf.text, 512)
 			imgui.PopItemWidth()
 			imgui.SameLine()
@@ -1037,11 +1026,6 @@ local function render_notify_page()
 	) then
 		Offme.script_state = not Offme.script_state
 	end
-
-	if offme_bold then
-		imgui.PopFont()
-	end
-	imgui.EndChild()
 end
 
 local function render_update_page()
@@ -1079,22 +1063,16 @@ local function render_content()
 	if Menu.sidebar == 0 then
 		render_update_page()
 	elseif Menu.sidebar == 1 then
-		render_notify_page()
+		local ok, err = pcall(render_notify_page)
+		if not ok then
+			imgui.TextColored(imgui.ImVec4(1, 0.35, 0.35, 1), im_utf8("Ошибка раздела Уведомление"))
+			imgui.TextWrapped(im_utf8(tostring(err)))
+			log_msg("[Tools] notify UI: " .. tostring(err))
+		end
 	end
 end
 
 local function register_imgui()
-	imgui.OnInitialize(function()
-		pcall(function()
-			local font_path = getFolderPath(0x14) .. "\\impact.ttf"
-			if doesFileExist(font_path) then
-				local ranges = imgui.GetIO().Fonts:GetGlyphRangesCyrillic()
-				offme_bold = imgui.GetIO().Fonts:AddFontFromFileTTF(font_path, 20, nil, ranges)
-				offme_font_ready = true
-			end
-		end)
-	end)
-
 	imgui.OnFrame(
 		function()
 			return Menu.Window[0]
@@ -1116,7 +1094,7 @@ local function register_imgui()
 				)
 				draw_close_button()
 				imgui.SetCursorPos(imgui.ImVec2(14 * dpi, 44 * dpi))
-				imgui.BeginChild("##content", imgui.ImVec2(-14 * dpi, -14 * dpi), false)
+				imgui.BeginChild("##content", imgui.ImVec2(-14 * dpi, -14 * dpi), false, Menu.sidebar == 1 and 0 or imgui.WindowFlags.NoScrollbar)
 				render_content()
 				imgui.EndChild()
 				imgui.EndChild()
