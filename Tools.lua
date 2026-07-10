@@ -8,7 +8,7 @@
 script_name("Tools Menu")
 script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
-script_version("1.0.4")
+script_version("1.0.5")
 
 require("lib.moonloader")
 require("encoding").default = "CP1251"
@@ -40,7 +40,7 @@ local sampev = require("lib.samp.events")
 
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
-local SCRIPT_VERSION_TEXT = "1.0.4"
+local SCRIPT_VERSION_TEXT = "1.0.5"
 local DATA_DIR_NAME = "Tools"
 local message_color = 0x009EFF
 
@@ -1069,29 +1069,22 @@ local function offme_center_text(text)
 	imgui.Text(im_utf8(text))
 end
 
-local function offme_rgb_from_hex(hex)
-	local r = tonumber("0x" .. hex:sub(1, 2)) / 255
-	local g = tonumber("0x" .. hex:sub(3, 4)) / 255
-	local b = tonumber("0x" .. hex:sub(5, 6)) / 255
-	return r, g, b
-end
-
-local function offme_brighten_rgb(r, g, b, mul)
-	return math.min(1, r * mul), math.min(1, g * mul), math.min(1, b * mul)
-end
-
 local function offme_colored_button(text, hex, trans, size)
-	local r, g, b = offme_rgb_from_hex(hex)
-	local selected = tonumber(trans) and tonumber(trans) >= 50
-	local base_a = selected and 0.98 or 0.78
-	local hr, hg, hb = offme_brighten_rgb(r, g, b, 1.28)
-	local ar, ag, ab = offme_brighten_rgb(r, g, b, 1.12)
-	imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(r, g, b, base_a))
-	imgui.PushStyleColor(imgui.Col.ButtonHovered, imgui.ImVec4(hr, hg, hb, 1.0))
-	imgui.PushStyleColor(imgui.Col.ButtonActive, imgui.ImVec4(ar, ag, ab, 1.0))
-	imgui.PushStyleColor(imgui.Col.Text, imgui.ImVec4(1, 1, 1, 1))
+	local r = tonumber("0x" .. hex:sub(1, 2))
+	local g = tonumber("0x" .. hex:sub(3, 4))
+	local b = tonumber("0x" .. hex:sub(5, 6))
+	local a = 60
+	local t = tonumber(trans)
+	if t ~= nil and t > 0 and t < 101 then
+		a = t
+	end
+	local fa = a / 100
+	local col = imgui.ImVec4(r / 255, g / 255, b / 255, fa)
+	imgui.PushStyleColor(imgui.Col.Button, col)
+	imgui.PushStyleColor(imgui.Col.ButtonHovered, col)
+	imgui.PushStyleColor(imgui.Col.ButtonActive, col)
 	local pressed = imgui.Button(im_utf8(text), size)
-	imgui.PopStyleColor(4)
+	imgui.PopStyleColor(3)
 	return pressed
 end
 
@@ -1188,7 +1181,11 @@ local function render_notify_page()
 		for i = 1, 6 do
 			local sel = Offme.settings.shit.whenDoIt == i
 			if offme_colored_button(Offme.whenDo[i], "F94242", sel and 70 or 20, imgui.ImVec2(btn_w, 24 * dpi)) then
-				Offme.settings.shit.whenDoIt = sel and 0 or i
+				if Offme.settings.shit.whenDoIt ~= i then
+					Offme.settings.shit.whenDoIt = i
+				else
+					Offme.settings.shit.whenDoIt = 0
+				end
 				offme_save()
 				offme_refresh_flags()
 			end
@@ -1202,7 +1199,11 @@ local function render_notify_page()
 		for i = 1, 6 do
 			local sel = Offme.settings.shit.whatDoIt == i
 			if offme_colored_button(Offme.whatDo[i], "F94242", sel and 70 or 20, imgui.ImVec2(btn_w, 24 * dpi)) then
-				Offme.settings.shit.whatDoIt = sel and 0 or i
+				if Offme.settings.shit.whatDoIt ~= i then
+					Offme.settings.shit.whatDoIt = i
+				else
+					Offme.settings.shit.whatDoIt = 0
+				end
 				offme_save()
 				offme_refresh_flags()
 			end

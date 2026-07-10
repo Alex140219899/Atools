@@ -1,7 +1,7 @@
 {
-  "current_version": "1.0.4",
+  "current_version": "1.0.5",
   "update_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools.lua",
-  "update_info": "v1.0.4 — надёжная проверка обновлений: main/master, обход кэша CDN, probe Tools.lua.",
+  "update_info": "v1.0.5 — кнопки Уведомление как в OFFme: выбранные ярче (70%), остальные тусклее (20%), повторный клик снимает выбор.",
   "data_version": "1",
   "settings_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools/SettingsDefault.json"
 }
