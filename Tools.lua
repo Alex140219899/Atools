@@ -8,7 +8,7 @@
 script_name("Tools Menu")
 script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
-script_version("1.0.4")
+script_version("1.0.6")
 
 require("lib.moonloader")
 require("encoding").default = "CP1251"
@@ -40,7 +40,7 @@ local sampev = require("lib.samp.events")
 
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
-local SCRIPT_VERSION_TEXT = "1.0.4"
+local SCRIPT_VERSION_TEXT = "1.0.6"
 local DATA_DIR_NAME = "Tools"
 local message_color = 0x009EFF
 
@@ -1080,18 +1080,45 @@ local function offme_brighten_rgb(r, g, b, mul)
 	return math.min(1, r * mul), math.min(1, g * mul), math.min(1, b * mul)
 end
 
-local function offme_colored_button(text, hex, trans, size)
+local function offme_darken_rgb(r, g, b, mul)
+	return r * mul, g * mul, b * mul
+end
+
+local function offme_colored_button(text, hex, selected, size)
 	local r, g, b = offme_rgb_from_hex(hex)
-	local selected = tonumber(trans) and tonumber(trans) >= 50
-	local base_a = selected and 0.98 or 0.78
-	local hr, hg, hb = offme_brighten_rgb(r, g, b, 1.28)
-	local ar, ag, ab = offme_brighten_rgb(r, g, b, 1.12)
-	imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(r, g, b, base_a))
+	local br, bg, bb
+	if selected then
+		br, bg, bb = offme_brighten_rgb(r, g, b, 1.18)
+	else
+		br, bg, bb = offme_darken_rgb(r, g, b, 0.38)
+	end
+
+	local base_a = selected and 1.0 or 0.58
+	local hr, hg, hb = selected and offme_brighten_rgb(br, bg, bb, 1.24) or offme_brighten_rgb(br, bg, bb, 1.42)
+	local ar, ag, ab = offme_darken_rgb(br, bg, bb, 0.86)
+
+	local color_pushes = 4
+	imgui.PushStyleColor(imgui.Col.Button, imgui.ImVec4(br, bg, bb, base_a))
 	imgui.PushStyleColor(imgui.Col.ButtonHovered, imgui.ImVec4(hr, hg, hb, 1.0))
 	imgui.PushStyleColor(imgui.Col.ButtonActive, imgui.ImVec4(ar, ag, ab, 1.0))
-	imgui.PushStyleColor(imgui.Col.Text, imgui.ImVec4(1, 1, 1, 1))
+	if selected then
+		imgui.PushStyleColor(imgui.Col.Text, imgui.ImVec4(1, 1, 1, 1))
+	else
+		imgui.PushStyleColor(imgui.Col.Text, imgui.ImVec4(0.82, 0.84, 0.88, 0.78))
+	end
+
+	if selected then
+		imgui.PushStyleVar(imgui.StyleVar.FrameBorderSize, 1.2 * custom_dpi)
+		imgui.PushStyleColor(imgui.Col.Border, imgui.ImVec4(1, 1, 1, 0.5))
+		color_pushes = 5
+	end
+
 	local pressed = imgui.Button(im_utf8(text), size)
-	imgui.PopStyleColor(4)
+
+	if selected then
+		imgui.PopStyleVar()
+	end
+	imgui.PopStyleColor(color_pushes)
 	return pressed
 end
 
@@ -1187,7 +1214,7 @@ local function render_notify_page()
 		imgui.Separator()
 		for i = 1, 6 do
 			local sel = Offme.settings.shit.whenDoIt == i
-			if offme_colored_button(Offme.whenDo[i], "F94242", sel and 70 or 20, imgui.ImVec2(btn_w, 24 * dpi)) then
+			if offme_colored_button(Offme.whenDo[i], "F94242", sel, imgui.ImVec2(btn_w, 24 * dpi)) then
 				Offme.settings.shit.whenDoIt = sel and 0 or i
 				offme_save()
 				offme_refresh_flags()
@@ -1201,7 +1228,7 @@ local function render_notify_page()
 		imgui.Separator()
 		for i = 1, 6 do
 			local sel = Offme.settings.shit.whatDoIt == i
-			if offme_colored_button(Offme.whatDo[i], "F94242", sel and 70 or 20, imgui.ImVec2(btn_w, 24 * dpi)) then
+			if offme_colored_button(Offme.whatDo[i], "F94242", sel, imgui.ImVec2(btn_w, 24 * dpi)) then
 				Offme.settings.shit.whatDoIt = sel and 0 or i
 				offme_save()
 				offme_refresh_flags()
@@ -1264,7 +1291,7 @@ local function render_notify_page()
 			imgui.InputText("##offme_action_text", Offme.buf.text, 512)
 			imgui.PopItemWidth()
 			imgui.SameLine()
-			if offme_colored_button("Повтор", Offme.repeat_state and "32CD32" or "F94242", 50, imgui.ImVec2(45 * dpi, 24 * dpi)) then
+			if offme_colored_button("Повтор", Offme.repeat_state and "32CD32" or "F94242", Offme.repeat_state, imgui.ImVec2(45 * dpi, 24 * dpi)) then
 				Offme.repeat_state = not Offme.repeat_state
 			end
 			imgui.Separator()
@@ -1283,7 +1310,7 @@ local function render_notify_page()
 	if offme_colored_button(
 		Offme.script_state and "Включено" or "Выключено",
 		Offme.script_state and "32CD32" or "F94242",
-		50,
+		Offme.script_state,
 		imgui.ImVec2(-1, 28 * dpi)
 	) then
 		Offme.script_state = not Offme.script_state
@@ -1336,12 +1363,27 @@ local function render_content()
 	end
 end
 
+local function tools_apply_menu_frame(frame)
+	if not frame then
+		return
+	end
+	frame.HideCursor = false
+	frame.LockPlayer = true
+end
+
 local function register_imgui()
+	imgui.OnInitialize(function()
+		local io = imgui.GetIO()
+		io.IniFilename = nil
+		io.ConfigFlags = io.ConfigFlags + imgui.ConfigFlags.NoMouseCursorChange
+	end)
+
 	imgui.OnFrame(
 		function()
 			return Menu.Window[0]
 		end,
-		function()
+		function(player)
+			tools_apply_menu_frame(player)
 			ensure_theme_once()
 			local dpi = custom_dpi
 			imgui.SetNextWindowSize(imgui.ImVec2(760 * dpi, 540 * dpi), imgui.Cond.FirstUseEver)
@@ -1371,7 +1413,8 @@ local function register_imgui()
 		function()
 			return Menu.InstallWindow[0]
 		end,
-		function()
+		function(player)
+			tools_apply_menu_frame(player)
 			ensure_theme_once()
 			imgui.SetNextWindowPos(imgui.ImVec2(sizeX / 2, sizeY / 2), imgui.Cond.Appearing, imgui.ImVec2(0.5, 0.5))
 			if
@@ -1415,7 +1458,8 @@ local function register_imgui()
 		function()
 			return Menu.UpdateWindow[0]
 		end,
-		function()
+		function(player)
+			tools_apply_menu_frame(player)
 			ensure_theme_once()
 			imgui.SetNextWindowPos(imgui.ImVec2(sizeX / 2, sizeY / 2), imgui.Cond.Appearing, imgui.ImVec2(0.5, 0.5))
 			if

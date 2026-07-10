@@ -1,7 +1,7 @@
 {
-  "current_version": "1.0.4",
+  "current_version": "1.0.6",
   "update_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools.lua",
-  "update_info": "v1.0.4 — надёжная проверка обновлений: main/master, обход кэша CDN, probe Tools.lua.",
+  "update_info": "v1.0.6 — в разделе Уведомление выбранные кнопки ярче, невыбранные темнее; видно что активно.",
   "data_version": "1",
   "settings_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools/SettingsDefault.json"
 }
