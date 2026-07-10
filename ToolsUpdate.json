@@ -1,7 +1,7 @@
 {
-  "current_version": "1.0.2",
+  "current_version": "1.0.3",
   "update_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools.lua",
-  "update_info": "v1.0.2 — разделы GitHub и Уведомление (OFFme), логотип, крестик закрытия, яркие кнопки с hover, фикс краша.",
+  "update_info": "v1.0.3 — логотип в сайдбаре опущен ниже от верхнего края.",
   "data_version": "1",
   "settings_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools/SettingsDefault.json"
 }

@@ -8,7 +8,7 @@
 script_name("Tools Menu")
 script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
-script_version("1.0.2")
+script_version("1.0.3")
 
 require("lib.moonloader")
 require("encoding").default = "CP1251"
@@ -37,7 +37,7 @@ local sampev = require("lib.samp.events")
 
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
-local SCRIPT_VERSION_TEXT = "1.0.2"
+local SCRIPT_VERSION_TEXT = "1.0.3"
 local DATA_DIR_NAME = "Tools"
 local message_color = 0x009EFF
 
@@ -701,7 +701,9 @@ end
 
 local function draw_sidebar_logo(dpi, sidebar_w)
 	local logo_sz = 68 * dpi
+	local top_pad = 24 * dpi
 	local pad = math.max(8 * dpi, (sidebar_w - logo_sz) * 0.5)
+	imgui.Dummy(imgui.ImVec2(0, top_pad))
 	imgui.SetCursorPosX(pad)
 	if ensure_logo_texture() then
 		imgui.Image(logo_texture, imgui.ImVec2(logo_sz, logo_sz))
