@@ -8,7 +8,7 @@
 script_name("Tools Menu")
 script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
-script_version("1.0.23")
+script_version("1.0.24")
 
 require("lib.moonloader")
 require("encoding").default = "CP1251"
@@ -40,7 +40,7 @@ local sampev = require("lib.samp.events")
 
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
-local SCRIPT_VERSION_TEXT = "1.0.23"
+local SCRIPT_VERSION_TEXT = "1.0.24"
 local DATA_DIR_NAME = "Tools"
 local message_color = 0x009EFF
 
@@ -1207,9 +1207,9 @@ local function ds_normalize_delivery_mode(cfg)
 			cfg.delivery_mode = "telegram"
 		elseif cfg.send_discord then
 			cfg.delivery_mode = "discord"
-		else
-			cfg.delivery_mode = "discord"
 		end
+		cfg.send_discord = nil
+		cfg.send_telegram = nil
 	end
 	local mode = tostring(cfg.delivery_mode or "discord")
 	if mode ~= "discord" and mode ~= "telegram" and mode ~= "both" then
@@ -1222,6 +1222,10 @@ local function ds_save_settings()
 		return
 	end
 	ds_ensure_dir()
+	if DsNotify.settings.general then
+		DsNotify.settings.general.send_discord = nil
+		DsNotify.settings.general.send_telegram = nil
+	end
 	write_json_file(path_ds_notify_settings, DsNotify.settings)
 end
 
@@ -1257,7 +1261,12 @@ local function ds_load_settings()
 		DsNotify.settings = {}
 	end
 	ds_merge_defaults(DsNotify.settings, ds_default_settings)
-	ds_normalize_delivery_mode(DsNotify.settings.general)
+	local cfg = DsNotify.settings.general
+	local had_legacy_flags = cfg.send_discord ~= nil or cfg.send_telegram ~= nil
+	ds_normalize_delivery_mode(cfg)
+	if had_legacy_flags then
+		ds_save_settings()
+	end
 	if type(DsNotify.settings.search_text) ~= "table" then
 		DsNotify.settings.search_text = {}
 	end
@@ -1442,7 +1451,9 @@ end
 local function ds_mode_button(label, mode_id, current_mode, w, h)
 	local sel = current_mode == mode_id
 	if offme_colored_button(label, sel and "32CD32" or "F94242", sel and 70 or 20, imgui.ImVec2(w, h)) then
-		return mode_id
+		if not sel then
+			return mode_id
+		end
 	end
 	return nil
 end
@@ -1451,7 +1462,6 @@ local function render_discord_page()
 	ds_load_settings()
 	local dpi = custom_dpi
 	local cfg = DsNotify.settings.general
-	ds_normalize_delivery_mode(cfg)
 	local mode = tostring(cfg.delivery_mode or "discord")
 
 	imgui.TextColored(accent(0.95), im_utf8("Discord / Telegram — уведомления из чата"))
@@ -1469,7 +1479,7 @@ local function render_discord_page()
 	imgui.SameLine(0, gap)
 	new_mode = new_mode or ds_mode_button("Telegram##ds_mode_t", "telegram", mode, mode_w, 28 * dpi)
 	imgui.SameLine(0, gap)
-	new_mode = new_mode or ds_mode_button("Оба##ds_mode_b", "both", mode, mode_w, 28 * dpi)
+	new_mode = new_mode or ds_mode_button("DS/TG##ds_mode_b", "both", mode, mode_w, 28 * dpi)
 	if new_mode then
 		cfg.delivery_mode = new_mode
 		mode = new_mode
