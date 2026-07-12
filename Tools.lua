@@ -8,7 +8,7 @@
 script_name("Tools Menu")
 script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
-script_version("1.0.25")
+script_version("1.0.26")
 
 require("lib.moonloader")
 require("encoding").default = "CP1251"
@@ -40,7 +40,7 @@ local sampev = require("lib.samp.events")
 
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
-local SCRIPT_VERSION_TEXT = "1.0.25"
+local SCRIPT_VERSION_TEXT = "1.0.26"
 local DATA_DIR_NAME = "Tools"
 local message_color = 0x009EFF
 
@@ -88,6 +88,10 @@ local path_ds_notify_legacy_settings = path_ds_notify_legacy_dir .. "/Settings.j
 
 local ds_effil_ok, ds_effil = pcall(require, "effil")
 local ds_requests_ok = pcall(require, "requests")
+
+local function ds_is_monet_loader()
+	return MONET_VERSION ~= nil
+end
 
 local default_settings = {
 	general = {
@@ -1301,16 +1305,18 @@ local function ds_async_http_request(method, url, args, resolve, reject)
 		end
 		return
 	end
-	local request_thread = ds_effil.thread(function(m, u, a)
+	local use_monet_dump = ds_is_monet_loader()
+	local request_thread = ds_effil.thread(function(m, u, a, monet)
 		local requests = require("requests")
-		local result, response = pcall(requests.request, m, u, ds_effil.dump(a))
+		local payload = monet and ds_effil.dump(a) or a
+		local result, response = pcall(requests.request, m, u, payload)
 		if result then
 			response.json, response.xml = nil, nil
 			return true, response
 		else
 			return false, response
 		end
-	end)(method, url, args)
+	end)(method, url, args, use_monet_dump)
 	resolve = resolve or function() end
 	reject = reject or function() end
 	lua_thread.create(function()
@@ -1373,9 +1379,13 @@ local function ds_http_detail(response)
 		return "нет ответа"
 	end
 	local code = tonumber(response.status_code or response.status) or 0
-	local body = tostring(response.text or response.body or ""):sub(1, 120)
+	local body = tostring(response.text or response.body or "")
 	if body ~= "" then
-		return ("HTTP %s: %s"):format(code, body)
+		local ok, parsed = pcall(decodeJson, body)
+		if ok and type(parsed) == "table" and parsed.description then
+			return ("HTTP %s: %s"):format(code, tostring(parsed.description))
+		end
+		return ("HTTP %s: %s"):format(code, body:sub(1, 120))
 	end
 	return ("HTTP %s"):format(code)
 end
