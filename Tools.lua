@@ -8,12 +8,19 @@
 script_name("Tools Menu")
 script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
-script_version("1.0.26")
+script_version("1.0.27")
 
 require("lib.moonloader")
 require("encoding").default = "CP1251"
 local u8 = require("encoding").UTF8
 local ffi = require("ffi")
+
+local DS_TEST_MSG = (function()
+	local ok, r = pcall(function()
+		return u8:decode("Проверка")
+	end)
+	return (ok and type(r) == "string" and r ~= "") and r or "Proverka"
+end)()
 local imgui = require("mimgui")
 
 if not imgui.PushID then
@@ -40,7 +47,7 @@ local sampev = require("lib.samp.events")
 
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
-local SCRIPT_VERSION_TEXT = "1.0.26"
+local SCRIPT_VERSION_TEXT = "1.0.27"
 local DATA_DIR_NAME = "Tools"
 local message_color = 0x009EFF
 
@@ -1299,48 +1306,22 @@ local function ds_str_to_im(s)
 end
 
 local function ds_async_http_request(method, url, args, resolve, reject)
-	if not ds_effil_ok or not ds_requests_ok or not lua_thread or not lua_thread.create then
+	if not ds_requests_ok or not lua_thread or not lua_thread.create then
 		if reject then
-			reject("effil/requests недоступны")
+			reject("requests/lua_thread недоступны")
 		end
 		return
 	end
-	local use_monet_dump = ds_is_monet_loader()
-	local request_thread = ds_effil.thread(function(m, u, a, monet)
-		local requests = require("requests")
-		local payload = monet and ds_effil.dump(a) or a
-		local result, response = pcall(requests.request, m, u, payload)
-		if result then
-			response.json, response.xml = nil, nil
-			return true, response
-		else
-			return false, response
-		end
-	end)(method, url, args, use_monet_dump)
 	resolve = resolve or function() end
 	reject = reject or function() end
 	lua_thread.create(function()
-		local runner = request_thread
-		while true do
-			local status, err = runner:status()
-			if not err then
-				if status == "completed" then
-					local result, response = runner:get()
-					if result then
-						resolve(response)
-					else
-						reject(response)
-					end
-					return
-				elseif status == "canceled" then
-					reject(status)
-					return
-				end
-			else
-				reject(err)
-				return
-			end
-			wait(0)
+		local requests = require("requests")
+		local ok, response = pcall(requests.request, method, url, args)
+		if ok and type(response) == "table" then
+			response.json, response.xml = nil, nil
+			resolve(response)
+		else
+			reject(response or "ошибка HTTP")
 		end
 	end)
 end
@@ -1366,12 +1347,53 @@ local function ds_json_chat_id(chat_id)
 	return n or s
 end
 
+local function ds_to_utf8(s)
+	local ok, r = pcall(function()
+		return u8(tostring(s or ""))
+	end)
+	return (ok and type(r) == "string") and r or tostring(s or "")
+end
+
+local function ds_json_escape(s)
+	s = ds_to_utf8(s)
+	s = s:gsub("\\", "\\\\")
+	s = s:gsub('"', '\\"')
+	s = s:gsub("\r", "\\r")
+	s = s:gsub("\n", "\\n")
+	return s
+end
+
+local function ds_build_tg_body(chat_id, msg)
+	local cid = ds_json_chat_id(chat_id)
+	local cid_part
+	if type(cid) == "number" then
+		cid_part = tostring(cid)
+	else
+		cid_part = '"' .. ds_json_escape(cid) .. '"'
+	end
+	return '{"chat_id":'
+		.. cid_part
+		.. ',"text":"'
+		.. ds_json_escape(msg)
+		.. '","disable_web_page_preview":true}'
+end
+
 local function ds_http_ok(response)
 	if not response then
 		return false
 	end
 	local code = tonumber(response.status_code or response.status) or 0
-	return code >= 200 and code < 300
+	if code < 200 or code >= 300 then
+		return false
+	end
+	local body = tostring(response.text or response.body or "")
+	if body ~= "" then
+		local ok, parsed = pcall(decodeJson, body)
+		if ok and type(parsed) == "table" and parsed.ok == false then
+			return false
+		end
+	end
+	return true
 end
 
 local function ds_http_detail(response)
@@ -1445,23 +1467,13 @@ local function ds_send_telegram(token, chat_id, msg, resolve, reject)
 		end
 		return false
 	end
-	local ok_json, data = pcall(encodeJson, {
-		chat_id = ds_json_chat_id(chat_id),
-		text = tostring(msg or ""),
-		disable_web_page_preview = true,
-	})
-	if not ok_json or type(data) ~= "string" then
-		if reject then
-			reject("ошибка JSON")
-		end
-		return false
-	end
+	local data = ds_build_tg_body(chat_id, msg)
 	ds_async_http_request(
 		"POST",
 		"https://api.telegram.org/bot" .. token .. "/sendMessage",
 		{
-			headers = { ["content-type"] = "application/json" },
-			data = u8(data),
+			headers = { ["Content-Type"] = "application/json; charset=utf-8" },
+			data = data,
 		},
 		resolve or function() end,
 		reject or function() end
@@ -1471,9 +1483,9 @@ end
 
 local function ds_test_report(channel, ok, detail)
 	if ok then
-		sampChat("{009EFF}[Tools]{ffffff} Тест " .. channel .. ": OK")
+		sampChat("{009EFF}[Tools]{ffffff} " .. channel .. ": отправлено «" .. DS_TEST_MSG .. "»")
 	else
-		sampChat("{FF634F}[Tools]{ffffff} Тест " .. channel .. ": " .. tostring(detail or "ошибка"))
+		sampChat("{FF634F}[Tools]{ffffff} " .. channel .. ": " .. tostring(detail or "ошибка"))
 	end
 end
 
@@ -1485,8 +1497,8 @@ local function ds_run_delivery_test()
 		sampChat("{009EFF}[Tools]{ffffff} Тест уже выполняется…")
 		return
 	end
-	if not ds_effil_ok or not ds_requests_ok then
-		sampChat("{FF634F}[Tools]{ffffff} Тест: нужны effil и requests")
+	if not ds_requests_ok then
+		sampChat("{FF634F}[Tools]{ffffff} Тест: нужна библиотека requests в moonloader/lib")
 		return
 	end
 
@@ -1495,7 +1507,7 @@ local function ds_run_delivery_test()
 	ds_save_settings()
 
 	local mode = tostring(cfg.delivery_mode or "discord")
-	local test_msg = "[Tools] Test"
+	local test_msg = DS_TEST_MSG
 	local jobs = {}
 
 	if mode == "discord" or mode == "both" then
@@ -1518,7 +1530,7 @@ local function ds_run_delivery_test()
 	end
 
 	DsNotify.test_busy = true
-	sampChat("{009EFF}[Tools]{ffffff} Отправка теста…")
+	sampChat("{009EFF}[Tools]{ffffff} Отправка «" .. DS_TEST_MSG .. "»…")
 
 	local remaining = #jobs
 	local function finish_test(label, ok, detail)
@@ -1631,8 +1643,8 @@ local function render_discord_page()
 	imgui.TextColored(accent(0.95), im_utf8("Discord / Telegram — уведомления из чата"))
 	imgui.Spacing()
 
-	if not ds_effil_ok or not ds_requests_ok then
-		imgui.TextColored(imgui.ImVec4(1, 0.45, 0.35, 1), im_utf8("Нужны библиотеки effil и requests в moonloader/lib"))
+	if not ds_requests_ok then
+		imgui.TextColored(imgui.ImVec4(1, 0.45, 0.35, 1), im_utf8("Нужна библиотека requests в moonloader/lib"))
 	end
 
 	imgui.TextColored(accent(1), im_utf8("Куда отправлять"))

@@ -1,10 +1,10 @@
 {
 
-  "current_version": "1.0.26",
+  "current_version": "1.0.27",
 
   "update_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools.lua",
 
-  "update_info": "v1.0.26 — исправлена отправка Telegram/Discord на MoonLoader (effil без dump).",
+  "update_info": "v1.0.27 — TG: тест «Проверка», HTTP через lua_thread, исправлен JSON UTF-8.",
 
   "data_version": "1",
 
