@@ -1,10 +1,10 @@
 {
 
-  "current_version": "1.0.21",
+  "current_version": "1.0.22",
 
   "update_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools.lua",
 
-  "update_info": "v1.0.21 — Discord/TG переключаются отдельно, повторное нажатие выключает канал.",
+  "update_info": "v1.0.22 — обновление версии.",
 
   "data_version": "1",
 
