@@ -8,7 +8,7 @@
 script_name("Tools Menu")
 script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
-script_version("1.0.17")
+script_version("1.0.21")
 
 require("lib.moonloader")
 require("encoding").default = "CP1251"
@@ -40,7 +40,7 @@ local sampev = require("lib.samp.events")
 
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
-local SCRIPT_VERSION_TEXT = "1.0.17"
+local SCRIPT_VERSION_TEXT = "1.0.21"
 local DATA_DIR_NAME = "Tools"
 local message_color = 0x009EFF
 
@@ -124,7 +124,7 @@ local Menu = {
 local SIDEBAR = {
 	{ id = "update", label = "GitHub", page = 0 },
 	{ id = "notify", label = "Уведомление", page = 1 },
-	{ id = "discord", label = "Discord", page = 2 },
+	{ id = "discord", label = "DS / TG", page = 2 },
 }
 
 local ds_default_settings = {
@@ -132,6 +132,11 @@ local ds_default_settings = {
 		webhook = "",
 		send_dialogs = true,
 		send_chat = true,
+		delivery_mode = "discord",
+		send_discord = true,
+		send_telegram = false,
+		telegram_bot_token = "",
+		telegram_chat_id = "",
 	},
 	search_text = {},
 }
@@ -140,6 +145,8 @@ local DsNotify = {
 	settings = nil,
 	ready = false,
 	buf_webhook = nil,
+	buf_tg_token = nil,
+	buf_tg_chat = nil,
 	buf_phrase = nil,
 }
 
@@ -1191,11 +1198,34 @@ local function ds_merge_defaults(dst, src)
 	end
 end
 
+local function ds_sync_delivery_flags(cfg)
+	if type(cfg) ~= "table" then
+		return
+	end
+	if cfg.send_discord == nil or cfg.send_telegram == nil then
+		local mode = tostring(cfg.delivery_mode or "discord")
+		cfg.send_discord = mode == "discord" or mode == "both"
+		cfg.send_telegram = mode == "telegram" or mode == "both"
+	end
+	cfg.send_discord = cfg.send_discord == true
+	cfg.send_telegram = cfg.send_telegram == true
+end
+
 local function ds_save_settings()
 	if not DsNotify.settings then
 		return
 	end
 	ds_ensure_dir()
+	local cfg = DsNotify.settings.general
+	if cfg.send_discord and cfg.send_telegram then
+		cfg.delivery_mode = "both"
+	elseif cfg.send_telegram then
+		cfg.delivery_mode = "telegram"
+	elseif cfg.send_discord then
+		cfg.delivery_mode = "discord"
+	else
+		cfg.delivery_mode = "none"
+	end
 	write_json_file(path_ds_notify_settings, DsNotify.settings)
 end
 
@@ -1231,11 +1261,16 @@ local function ds_load_settings()
 		DsNotify.settings = {}
 	end
 	ds_merge_defaults(DsNotify.settings, ds_default_settings)
+	ds_sync_delivery_flags(DsNotify.settings.general)
 	if type(DsNotify.settings.search_text) ~= "table" then
 		DsNotify.settings.search_text = {}
 	end
 	local wh = tostring(DsNotify.settings.general.webhook or "")
+	local tg_token = tostring(DsNotify.settings.general.telegram_bot_token or "")
+	local tg_chat = tostring(DsNotify.settings.general.telegram_chat_id or "")
 	DsNotify.buf_webhook = imgui.new.char[4096](wh)
+	DsNotify.buf_tg_token = imgui.new.char[512](tg_token)
+	DsNotify.buf_tg_chat = imgui.new.char[256](tg_chat)
 	DsNotify.buf_phrase = imgui.new.char[1024]("")
 end
 
@@ -1247,7 +1282,10 @@ local function ds_buf_to_str(buf)
 end
 
 local function ds_str_to_im(s)
-	return im_utf8(s)
+	local ok, r = pcall(function()
+		return u8(tostring(s or ""))
+	end)
+	return (ok and type(r) == "string") and r or tostring(s or "")
 end
 
 local function ds_async_http_request(method, url, args, resolve, reject)
@@ -1305,26 +1343,15 @@ local function ds_send_webhook(url, data)
 	}, function() end, function() end)
 end
 
-local function ds_on_server_message(text)
-	if not DsNotify.settings or not DsNotify.settings.general.send_chat then
-		return
-	end
-	local phrases = DsNotify.settings.search_text
-	if type(phrases) ~= "table" or #phrases == 0 then
-		return
-	end
+local function ds_send_discord(msg)
 	local webhook = tostring(DsNotify.settings.general.webhook or "")
 	if webhook == "" then
 		return
 	end
-	local msg_text = tostring(text or "")
-	for _, value in ipairs(phrases) do
-		if value ~= "" and msg_text:find(tostring(value), 1, true) then
-			local msg = msg_text:gsub("{......}", "")
-			msg = msg:gsub("%%", "%%%%")
-			ds_send_webhook(
-				webhook,
-				([=[{
+	local safe = tostring(msg or ""):gsub("%%", "%%%%")
+	ds_send_webhook(
+		webhook,
+		([=[{
   "content": null,
   "embeds": [
     {
@@ -1333,29 +1360,151 @@ local function ds_on_server_message(text)
     }
   ],
   "attachments": []
-}]=]):format(msg)
-			)
+}]=]):format(safe)
+	)
+end
+
+local function ds_send_telegram(token, chat_id, msg)
+	if token == "" or chat_id == "" then
+		return
+	end
+	local ok_json, data = pcall(encodeJson, {
+		chat_id = chat_id,
+		text = tostring(msg or ""),
+		disable_web_page_preview = true,
+	})
+	if not ok_json or type(data) ~= "string" then
+		return
+	end
+	ds_async_http_request(
+		"POST",
+		"https://api.telegram.org/bot" .. token .. "/sendMessage",
+		{
+			headers = { ["content-type"] = "application/json" },
+			data = u8(data),
+		},
+		function() end,
+		function() end
+	)
+end
+
+local function ds_delivery_ready()
+	local cfg = DsNotify.settings.general
+	if cfg.send_discord and tostring(cfg.webhook or "") ~= "" then
+		return true
+	end
+	if
+		cfg.send_telegram
+		and tostring(cfg.telegram_bot_token or "") ~= ""
+		and tostring(cfg.telegram_chat_id or "") ~= ""
+	then
+		return true
+	end
+	return false
+end
+
+local function ds_send_chat_notification(msg)
+	if not DsNotify.settings then
+		return
+	end
+	local cfg = DsNotify.settings.general
+	if cfg.send_discord then
+		ds_send_discord(msg)
+	end
+	if cfg.send_telegram then
+		ds_send_telegram(
+			tostring(cfg.telegram_bot_token or ""),
+			tostring(cfg.telegram_chat_id or ""),
+			msg
+		)
+	end
+end
+
+local function ds_on_server_message(text)
+	if not DsNotify.settings or not DsNotify.settings.general.send_chat then
+		return
+	end
+	local phrases = DsNotify.settings.search_text
+	if type(phrases) ~= "table" or #phrases == 0 then
+		return
+	end
+	if not ds_delivery_ready() then
+		return
+	end
+	local msg_text = tostring(text or "")
+	for _, value in ipairs(phrases) do
+		if value ~= "" and msg_text:find(tostring(value), 1, true) then
+			local msg = msg_text:gsub("{......}", "")
+			ds_send_chat_notification(msg)
 			return
 		end
 	end
+end
+
+local function ds_channel_toggle(label, active, w, h)
+	if offme_colored_button(label, active and "32CD32" or "F94242", active and 70 or 20, imgui.ImVec2(w, h)) then
+		return not active
+	end
+	return active
 end
 
 local function render_discord_page()
 	ds_load_settings()
 	local dpi = custom_dpi
 	local cfg = DsNotify.settings.general
+	ds_sync_delivery_flags(cfg)
 
-	imgui.TextColored(accent(0.95), im_utf8("Discord — отправка в webhook"))
+	imgui.TextColored(accent(0.95), im_utf8("Discord / Telegram — уведомления из чата"))
 	imgui.Spacing()
 
 	if not ds_effil_ok or not ds_requests_ok then
 		imgui.TextColored(imgui.ImVec4(1, 0.45, 0.35, 1), im_utf8("Нужны библиотеки effil и requests в moonloader/lib"))
 	end
 
-	imgui.Text(im_utf8("Webhook URL:"))
+	imgui.TextColored(accent(1), im_utf8("Куда отправлять"))
+	imgui.TextWrapped(im_utf8("Нажми канал — включить. Нажми ещё раз — выключить."))
+	local avail = imgui.GetContentRegionAvail()
+	local gap = 10 * dpi
+	local ch_w = math.max(120 * dpi, (avail.x - gap) * 0.5)
+	local ds_on = cfg.send_discord == true
+	local tg_on = cfg.send_telegram == true
+	local new_ds = ds_channel_toggle("Discord##ds_ch_d", ds_on, ch_w, 30 * dpi)
+	imgui.SameLine(0, gap)
+	local new_tg = ds_channel_toggle("Telegram##ds_ch_t", tg_on, ch_w, 30 * dpi)
+	if new_ds ~= ds_on then
+		cfg.send_discord = new_ds
+		ds_save_settings()
+	end
+	if new_tg ~= tg_on then
+		cfg.send_telegram = new_tg
+		ds_save_settings()
+	end
+	if not cfg.send_discord and not cfg.send_telegram then
+		imgui.Spacing()
+		imgui.TextColored(imgui.ImVec4(1, 0.55, 0.35, 1), im_utf8("Отправка никуда не идёт — включи Discord и/или Telegram"))
+	end
+	imgui.Spacing()
+
+	imgui.Text(im_utf8("Webhook URL (Discord):"))
 	imgui.PushItemWidth(-1)
 	if imgui.InputText("##ds_webhook", DsNotify.buf_webhook, 4096) then
 		cfg.webhook = ds_buf_to_str(DsNotify.buf_webhook)
+		ds_save_settings()
+	end
+	imgui.PopItemWidth()
+	imgui.Spacing()
+
+	imgui.Text(im_utf8("TG Bot Token:"))
+	imgui.PushItemWidth(-1)
+	if imgui.InputText("##ds_tg_token", DsNotify.buf_tg_token, 512) then
+		cfg.telegram_bot_token = ds_buf_to_str(DsNotify.buf_tg_token)
+		ds_save_settings()
+	end
+	imgui.PopItemWidth()
+	imgui.Text(im_utf8("TG Chat ID:"))
+	imgui.PushItemWidth(-1)
+	if imgui.InputText("##ds_tg_chat", DsNotify.buf_tg_chat, 256) then
+		cfg.telegram_chat_id = ds_buf_to_str(DsNotify.buf_tg_chat)
 		ds_save_settings()
 	end
 	imgui.PopItemWidth()
@@ -1372,25 +1521,49 @@ local function render_discord_page()
 		imgui.TextWrapped(im_utf8("Сохраняются в " .. path_ds_notify_settings))
 		imgui.Spacing()
 
-		if imgui.BeginChild("##ds_phrases", imgui.ImVec2(-1, 180 * dpi), true) then
+		imgui.PushStyleVarVec2(imgui.StyleVar.WindowPadding, imgui.ImVec2(10 * dpi, 8 * dpi))
+		if imgui.BeginChild("##ds_phrases", imgui.ImVec2(-1, 200 * dpi), true) then
 			local remove_idx = nil
+			local btn_w = 32 * dpi
+			local row_pad = 8 * dpi
+			local inner_w = imgui.GetContentRegionAvail().x
+			local text_w = math.max(80 * dpi, inner_w - btn_w - row_pad)
+
+			imgui.PushStyleVarVec2(imgui.StyleVar.ItemSpacing, imgui.ImVec2(6 * dpi, 8 * dpi))
 			for index, value in ipairs(DsNotify.settings.search_text) do
+				imgui.PushID(index)
+				local row_x = imgui.GetCursorPosX()
+				local row_y = imgui.GetCursorPosY()
+
+				imgui.PushTextWrapPos(row_x + text_w)
 				imgui.TextWrapped(ds_str_to_im(tostring(value)))
-				imgui.SameLine()
-				if imgui.Button(im_utf8("X##ds_rm_" .. index), imgui.ImVec2(28 * dpi, 22 * dpi)) then
+				imgui.PopTextWrapPos()
+
+				local row_bottom = imgui.GetCursorPosY()
+				imgui.SetCursorPos(imgui.ImVec2(row_x + inner_w - btn_w, row_y))
+				if imgui.Button(im_utf8("X##ds_rm"), imgui.ImVec2(btn_w, 22 * dpi)) then
 					remove_idx = index
 				end
+				imgui.SetCursorPos(imgui.ImVec2(row_x, math.max(row_bottom, row_y + 22 * dpi)))
+				if index < #DsNotify.settings.search_text then
+					imgui.Separator()
+				end
+				imgui.PopID()
 			end
+			imgui.PopStyleVar()
 			if remove_idx then
 				table.remove(DsNotify.settings.search_text, remove_idx)
 				ds_save_settings()
 			end
 			imgui.EndChild()
 		end
+		imgui.PopStyleVar()
 
 		imgui.Spacing()
 		imgui.Text(im_utf8("Добавить фразу:"))
-		imgui.PushItemWidth(-80 * dpi)
+		local add_btn_w = 70 * dpi
+		local add_gap = 8 * dpi
+		imgui.PushItemWidth(-(add_btn_w + add_gap))
 		imgui.InputText("##ds_phrase_new", DsNotify.buf_phrase, 1024)
 		imgui.PopItemWidth()
 		imgui.SameLine()
@@ -1752,7 +1925,7 @@ function main()
 	end
 
 	if doesFileExist(worked_dir .. "/tg.lua") then
-		sampChat("{009EFF}[Tools]{ffffff} tg.lua можно отключить — Discord уже в /tools → Discord")
+		sampChat("{009EFF}[Tools]{ffffff} tg.lua можно отключить — DS/TG уже в /tools → DS / TG")
 	end
 
 	if lua_thread and lua_thread.create then
