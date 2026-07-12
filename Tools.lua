@@ -8,7 +8,7 @@
 script_name("Tools Menu")
 script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
-script_version("1.0.24")
+script_version("1.0.25")
 
 require("lib.moonloader")
 require("encoding").default = "CP1251"
@@ -40,7 +40,7 @@ local sampev = require("lib.samp.events")
 
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
-local SCRIPT_VERSION_TEXT = "1.0.24"
+local SCRIPT_VERSION_TEXT = "1.0.25"
 local DATA_DIR_NAME = "Tools"
 local message_color = 0x009EFF
 
@@ -146,6 +146,7 @@ local DsNotify = {
 	buf_tg_token = nil,
 	buf_tg_chat = nil,
 	buf_phrase = nil,
+	test_busy = false,
 }
 
 local Offme = {
@@ -1338,23 +1339,77 @@ local function ds_async_http_request(method, url, args, resolve, reject)
 	end)
 end
 
-local function ds_send_webhook(url, data)
-	if url == "" then
+local function ds_sync_cfg_from_bufs(cfg)
+	if not cfg or not DsNotify.buf_webhook then
 		return
+	end
+	cfg.webhook = ds_buf_to_str(DsNotify.buf_webhook)
+	cfg.telegram_bot_token = ds_buf_to_str(DsNotify.buf_tg_token)
+	cfg.telegram_chat_id = ds_buf_to_str(DsNotify.buf_tg_chat)
+	cfg.webhook = tostring(cfg.webhook or ""):match("^%s*(.-)%s*$") or ""
+	cfg.telegram_bot_token = tostring(cfg.telegram_bot_token or ""):match("^%s*(.-)%s*$") or ""
+	cfg.telegram_chat_id = tostring(cfg.telegram_chat_id or ""):match("^%s*(.-)%s*$") or ""
+end
+
+local function ds_json_chat_id(chat_id)
+	local s = tostring(chat_id or ""):match("^%s*(.-)%s*$") or ""
+	if s == "" then
+		return s
+	end
+	local n = tonumber(s)
+	return n or s
+end
+
+local function ds_http_ok(response)
+	if not response then
+		return false
+	end
+	local code = tonumber(response.status_code or response.status) or 0
+	return code >= 200 and code < 300
+end
+
+local function ds_http_detail(response)
+	if not response then
+		return "нет ответа"
+	end
+	local code = tonumber(response.status_code or response.status) or 0
+	local body = tostring(response.text or response.body or ""):sub(1, 120)
+	if body ~= "" then
+		return ("HTTP %s: %s"):format(code, body)
+	end
+	return ("HTTP %s"):format(code)
+end
+
+local function ds_send_webhook(url, data, resolve, reject)
+	if url == "" then
+		if reject then
+			reject("webhook пуст")
+		end
+		return false
 	end
 	ds_async_http_request("POST", url, {
 		headers = { ["content-type"] = "application/json" },
 		data = u8(data),
-	}, function() end, function() end)
+	}, resolve or function() end, reject or function() end)
+	return true
 end
 
-local function ds_send_discord(msg)
+local function ds_send_discord(msg, resolve, reject)
+	if not DsNotify.settings then
+		if reject then
+			reject("нет настроек")
+		end
+		return false
+	end
 	local webhook = tostring(DsNotify.settings.general.webhook or "")
 	if webhook == "" then
-		return
+		if reject then
+			reject("webhook пуст")
+		end
+		return false
 	end
 	local safe = tostring(msg or ""):gsub("%%", "%%%%")
-	ds_send_webhook(
+	return ds_send_webhook(
 		webhook,
 		([=[{
   "content": null,
@@ -1365,21 +1420,31 @@ local function ds_send_discord(msg)
     }
   ],
   "attachments": []
-}]=]):format(safe)
+}]=]):format(safe),
+		resolve,
+		reject
 	)
 end
 
-local function ds_send_telegram(token, chat_id, msg)
+local function ds_send_telegram(token, chat_id, msg, resolve, reject)
+	token = tostring(token or ""):match("^%s*(.-)%s*$") or ""
+	chat_id = tostring(chat_id or ""):match("^%s*(.-)%s*$") or ""
 	if token == "" or chat_id == "" then
-		return
+		if reject then
+			reject("token или chat id пуст")
+		end
+		return false
 	end
 	local ok_json, data = pcall(encodeJson, {
-		chat_id = chat_id,
+		chat_id = ds_json_chat_id(chat_id),
 		text = tostring(msg or ""),
 		disable_web_page_preview = true,
 	})
 	if not ok_json or type(data) ~= "string" then
-		return
+		if reject then
+			reject("ошибка JSON")
+		end
+		return false
 	end
 	ds_async_http_request(
 		"POST",
@@ -1388,9 +1453,98 @@ local function ds_send_telegram(token, chat_id, msg)
 			headers = { ["content-type"] = "application/json" },
 			data = u8(data),
 		},
-		function() end,
-		function() end
+		resolve or function() end,
+		reject or function() end
 	)
+	return true
+end
+
+local function ds_test_report(channel, ok, detail)
+	if ok then
+		sampChat("{009EFF}[Tools]{ffffff} Тест " .. channel .. ": OK")
+	else
+		sampChat("{FF634F}[Tools]{ffffff} Тест " .. channel .. ": " .. tostring(detail or "ошибка"))
+	end
+end
+
+local function ds_run_delivery_test()
+	if not DsNotify.settings then
+		return
+	end
+	if DsNotify.test_busy then
+		sampChat("{009EFF}[Tools]{ffffff} Тест уже выполняется…")
+		return
+	end
+	if not ds_effil_ok or not ds_requests_ok then
+		sampChat("{FF634F}[Tools]{ffffff} Тест: нужны effil и requests")
+		return
+	end
+
+	local cfg = DsNotify.settings.general
+	ds_sync_cfg_from_bufs(cfg)
+	ds_save_settings()
+
+	local mode = tostring(cfg.delivery_mode or "discord")
+	local test_msg = "[Tools] Test"
+	local jobs = {}
+
+	if mode == "discord" or mode == "both" then
+		if cfg.webhook == "" then
+			ds_test_report("Discord", false, "webhook пуст")
+		else
+			jobs[#jobs + 1] = { "Discord", "discord" }
+		end
+	end
+	if mode == "telegram" or mode == "both" then
+		if cfg.telegram_bot_token == "" or cfg.telegram_chat_id == "" then
+			ds_test_report("Telegram", false, "token или chat id пуст")
+		else
+			jobs[#jobs + 1] = { "Telegram", "telegram" }
+		end
+	end
+
+	if #jobs == 0 then
+		return
+	end
+
+	DsNotify.test_busy = true
+	sampChat("{009EFF}[Tools]{ffffff} Отправка теста…")
+
+	local remaining = #jobs
+	local function finish_test(label, ok, detail)
+		ds_test_report(label, ok, detail)
+		remaining = remaining - 1
+		if remaining <= 0 then
+			DsNotify.test_busy = false
+		end
+	end
+
+	for _, job in ipairs(jobs) do
+		local label, kind = job[1], job[2]
+		if kind == "discord" then
+			ds_send_discord(
+				test_msg,
+				function(response)
+					finish_test(label, ds_http_ok(response), ds_http_detail(response))
+				end,
+				function(err)
+					finish_test(label, false, err)
+				end
+			)
+		elseif kind == "telegram" then
+			ds_send_telegram(
+				cfg.telegram_bot_token,
+				cfg.telegram_chat_id,
+				test_msg,
+				function(response)
+					finish_test(label, ds_http_ok(response), ds_http_detail(response))
+				end,
+				function(err)
+					finish_test(label, false, err)
+				end
+			)
+		end
+	end
 end
 
 local function ds_delivery_ready()
@@ -1515,6 +1669,17 @@ local function render_discord_page()
 		imgui.PopItemWidth()
 		imgui.Spacing()
 	end
+
+	if imgui.Button(im_utf8("Проверить##ds_test"), imgui.ImVec2(96 * dpi, 24 * dpi)) then
+		ds_run_delivery_test()
+	end
+	imgui.SameLine()
+	if DsNotify.test_busy then
+		imgui.TextColored(accent(1), im_utf8("Отправка теста…"))
+	else
+		imgui.TextColored(imgui.ImVec4(0.55, 0.57, 0.62, 1), im_utf8("Тест в выбранный канал (результат в чат)"))
+	end
+	imgui.Spacing()
 
 	if accent_button(cfg.send_chat and "Отключить отправку чата##ds_chat" or "Включить отправку чата##ds_chat", -1, 32 * dpi) then
 		cfg.send_chat = not cfg.send_chat
