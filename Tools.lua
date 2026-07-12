@@ -8,7 +8,7 @@
 script_name("Tools Menu")
 script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
-script_version("1.0.22")
+script_version("1.0.23")
 
 require("lib.moonloader")
 require("encoding").default = "CP1251"
@@ -40,7 +40,7 @@ local sampev = require("lib.samp.events")
 
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
-local SCRIPT_VERSION_TEXT = "1.0.22"
+local SCRIPT_VERSION_TEXT = "1.0.23"
 local DATA_DIR_NAME = "Tools"
 local message_color = 0x009EFF
 
@@ -133,8 +133,6 @@ local ds_default_settings = {
 		send_dialogs = true,
 		send_chat = true,
 		delivery_mode = "discord",
-		send_discord = true,
-		send_telegram = false,
 		telegram_bot_token = "",
 		telegram_chat_id = "",
 	},
@@ -1198,17 +1196,25 @@ local function ds_merge_defaults(dst, src)
 	end
 end
 
-local function ds_sync_delivery_flags(cfg)
+local function ds_normalize_delivery_mode(cfg)
 	if type(cfg) ~= "table" then
 		return
 	end
-	if cfg.send_discord == nil or cfg.send_telegram == nil then
-		local mode = tostring(cfg.delivery_mode or "discord")
-		cfg.send_discord = mode == "discord" or mode == "both"
-		cfg.send_telegram = mode == "telegram" or mode == "both"
+	if cfg.send_discord ~= nil or cfg.send_telegram ~= nil then
+		if cfg.send_discord and cfg.send_telegram then
+			cfg.delivery_mode = "both"
+		elseif cfg.send_telegram then
+			cfg.delivery_mode = "telegram"
+		elseif cfg.send_discord then
+			cfg.delivery_mode = "discord"
+		else
+			cfg.delivery_mode = "discord"
+		end
 	end
-	cfg.send_discord = cfg.send_discord == true
-	cfg.send_telegram = cfg.send_telegram == true
+	local mode = tostring(cfg.delivery_mode or "discord")
+	if mode ~= "discord" and mode ~= "telegram" and mode ~= "both" then
+		cfg.delivery_mode = "discord"
+	end
 end
 
 local function ds_save_settings()
@@ -1216,16 +1222,6 @@ local function ds_save_settings()
 		return
 	end
 	ds_ensure_dir()
-	local cfg = DsNotify.settings.general
-	if cfg.send_discord and cfg.send_telegram then
-		cfg.delivery_mode = "both"
-	elseif cfg.send_telegram then
-		cfg.delivery_mode = "telegram"
-	elseif cfg.send_discord then
-		cfg.delivery_mode = "discord"
-	else
-		cfg.delivery_mode = "none"
-	end
 	write_json_file(path_ds_notify_settings, DsNotify.settings)
 end
 
@@ -1261,7 +1257,7 @@ local function ds_load_settings()
 		DsNotify.settings = {}
 	end
 	ds_merge_defaults(DsNotify.settings, ds_default_settings)
-	ds_sync_delivery_flags(DsNotify.settings.general)
+	ds_normalize_delivery_mode(DsNotify.settings.general)
 	if type(DsNotify.settings.search_text) ~= "table" then
 		DsNotify.settings.search_text = {}
 	end
@@ -1390,15 +1386,16 @@ end
 
 local function ds_delivery_ready()
 	local cfg = DsNotify.settings.general
-	if cfg.send_discord and tostring(cfg.webhook or "") ~= "" then
-		return true
+	local mode = tostring(cfg.delivery_mode or "discord")
+	if mode == "discord" or mode == "both" then
+		if tostring(cfg.webhook or "") ~= "" then
+			return true
+		end
 	end
-	if
-		cfg.send_telegram
-		and tostring(cfg.telegram_bot_token or "") ~= ""
-		and tostring(cfg.telegram_chat_id or "") ~= ""
-	then
-		return true
+	if mode == "telegram" or mode == "both" then
+		if tostring(cfg.telegram_bot_token or "") ~= "" and tostring(cfg.telegram_chat_id or "") ~= "" then
+			return true
+		end
 	end
 	return false
 end
@@ -1408,10 +1405,11 @@ local function ds_send_chat_notification(msg)
 		return
 	end
 	local cfg = DsNotify.settings.general
-	if cfg.send_discord then
+	local mode = tostring(cfg.delivery_mode or "discord")
+	if mode == "discord" or mode == "both" then
 		ds_send_discord(msg)
 	end
-	if cfg.send_telegram then
+	if mode == "telegram" or mode == "both" then
 		ds_send_telegram(
 			tostring(cfg.telegram_bot_token or ""),
 			tostring(cfg.telegram_chat_id or ""),
@@ -1441,18 +1439,20 @@ local function ds_on_server_message(text)
 	end
 end
 
-local function ds_channel_toggle(label, active, w, h)
-	if offme_colored_button(label, active and "32CD32" or "F94242", active and 70 or 20, imgui.ImVec2(w, h)) then
-		return not active
+local function ds_mode_button(label, mode_id, current_mode, w, h)
+	local sel = current_mode == mode_id
+	if offme_colored_button(label, sel and "32CD32" or "F94242", sel and 70 or 20, imgui.ImVec2(w, h)) then
+		return mode_id
 	end
-	return active
+	return nil
 end
 
 local function render_discord_page()
 	ds_load_settings()
 	local dpi = custom_dpi
 	local cfg = DsNotify.settings.general
-	ds_sync_delivery_flags(cfg)
+	ds_normalize_delivery_mode(cfg)
+	local mode = tostring(cfg.delivery_mode or "discord")
 
 	imgui.TextColored(accent(0.95), im_utf8("Discord / Telegram — уведомления из чата"))
 	imgui.Spacing()
@@ -1462,53 +1462,49 @@ local function render_discord_page()
 	end
 
 	imgui.TextColored(accent(1), im_utf8("Куда отправлять"))
-	imgui.TextWrapped(im_utf8("Нажми канал — включить. Нажми ещё раз — выключить."))
 	local avail = imgui.GetContentRegionAvail()
-	local gap = 10 * dpi
-	local ch_w = math.max(120 * dpi, (avail.x - gap) * 0.5)
-	local ds_on = cfg.send_discord == true
-	local tg_on = cfg.send_telegram == true
-	local new_ds = ds_channel_toggle("Discord##ds_ch_d", ds_on, ch_w, 30 * dpi)
+	local gap = 8 * dpi
+	local mode_w = math.max(90 * dpi, (avail.x - gap * 2) / 3)
+	local new_mode = ds_mode_button("Discord##ds_mode_d", "discord", mode, mode_w, 28 * dpi)
 	imgui.SameLine(0, gap)
-	local new_tg = ds_channel_toggle("Telegram##ds_ch_t", tg_on, ch_w, 30 * dpi)
-	if new_ds ~= ds_on then
-		cfg.send_discord = new_ds
+	new_mode = new_mode or ds_mode_button("Telegram##ds_mode_t", "telegram", mode, mode_w, 28 * dpi)
+	imgui.SameLine(0, gap)
+	new_mode = new_mode or ds_mode_button("Оба##ds_mode_b", "both", mode, mode_w, 28 * dpi)
+	if new_mode then
+		cfg.delivery_mode = new_mode
+		mode = new_mode
 		ds_save_settings()
 	end
-	if new_tg ~= tg_on then
-		cfg.send_telegram = new_tg
-		ds_save_settings()
-	end
-	if not cfg.send_discord and not cfg.send_telegram then
+	imgui.Spacing()
+
+	if mode == "discord" or mode == "both" then
+		imgui.Text(im_utf8("Webhook URL (Discord):"))
+		imgui.PushItemWidth(-1)
+		if imgui.InputText("##ds_webhook", DsNotify.buf_webhook, 4096) then
+			cfg.webhook = ds_buf_to_str(DsNotify.buf_webhook)
+			ds_save_settings()
+		end
+		imgui.PopItemWidth()
 		imgui.Spacing()
-		imgui.TextColored(imgui.ImVec4(1, 0.55, 0.35, 1), im_utf8("Отправка никуда не идёт — включи Discord и/или Telegram"))
 	end
-	imgui.Spacing()
 
-	imgui.Text(im_utf8("Webhook URL (Discord):"))
-	imgui.PushItemWidth(-1)
-	if imgui.InputText("##ds_webhook", DsNotify.buf_webhook, 4096) then
-		cfg.webhook = ds_buf_to_str(DsNotify.buf_webhook)
-		ds_save_settings()
+	if mode == "telegram" or mode == "both" then
+		imgui.Text(im_utf8("TG Bot Token:"))
+		imgui.PushItemWidth(-1)
+		if imgui.InputText("##ds_tg_token", DsNotify.buf_tg_token, 512) then
+			cfg.telegram_bot_token = ds_buf_to_str(DsNotify.buf_tg_token)
+			ds_save_settings()
+		end
+		imgui.PopItemWidth()
+		imgui.Text(im_utf8("TG Chat ID:"))
+		imgui.PushItemWidth(-1)
+		if imgui.InputText("##ds_tg_chat", DsNotify.buf_tg_chat, 256) then
+			cfg.telegram_chat_id = ds_buf_to_str(DsNotify.buf_tg_chat)
+			ds_save_settings()
+		end
+		imgui.PopItemWidth()
+		imgui.Spacing()
 	end
-	imgui.PopItemWidth()
-	imgui.Spacing()
-
-	imgui.Text(im_utf8("TG Bot Token:"))
-	imgui.PushItemWidth(-1)
-	if imgui.InputText("##ds_tg_token", DsNotify.buf_tg_token, 512) then
-		cfg.telegram_bot_token = ds_buf_to_str(DsNotify.buf_tg_token)
-		ds_save_settings()
-	end
-	imgui.PopItemWidth()
-	imgui.Text(im_utf8("TG Chat ID:"))
-	imgui.PushItemWidth(-1)
-	if imgui.InputText("##ds_tg_chat", DsNotify.buf_tg_chat, 256) then
-		cfg.telegram_chat_id = ds_buf_to_str(DsNotify.buf_tg_chat)
-		ds_save_settings()
-	end
-	imgui.PopItemWidth()
-	imgui.Spacing()
 
 	if accent_button(cfg.send_chat and "Отключить отправку чата##ds_chat" or "Включить отправку чата##ds_chat", -1, 32 * dpi) then
 		cfg.send_chat = not cfg.send_chat

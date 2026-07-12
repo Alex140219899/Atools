@@ -1,10 +1,10 @@
 {
 
-  "current_version": "1.0.22",
+  "current_version": "1.0.23",
 
   "update_url": "https://raw.githubusercontent.com/Alex140219899/Atools/main/Tools.lua",
 
-  "update_info": "v1.0.22 — обновление версии.",
+  "update_info": "v1.0.23 — переключатель Discord / Telegram / Оба как раньше.",
 
   "data_version": "1",
 
