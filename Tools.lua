@@ -8,7 +8,7 @@
 script_name("Tools Menu")
 script_description("Tools: /tools — меню с обновлением с GitHub")
 script_author("Alex140219899")
-script_version("1.0.16")
+script_version("1.0.17")
 
 require("lib.moonloader")
 require("encoding").default = "CP1251"
@@ -40,7 +40,7 @@ local sampev = require("lib.samp.events")
 
 local sizeX, sizeY = getScreenResolution()
 local worked_dir = getWorkingDirectory():gsub("\\", "/")
-local SCRIPT_VERSION_TEXT = "1.0.16"
+local SCRIPT_VERSION_TEXT = "1.0.17"
 local DATA_DIR_NAME = "Tools"
 local message_color = 0x009EFF
 
@@ -81,6 +81,13 @@ local path_settings = configDirectory .. "/Settings.json"
 local path_logo = configDirectory .. "/logo.png"
 local path_offme_ini = configDirectory .. "/OFFme.ini"
 local path_offme_ini_legacy = worked_dir .. "/OFFme.ini"
+local path_ds_notify_dir = configDirectory .. "/DSNotify"
+local path_ds_notify_settings = path_ds_notify_dir .. "/Settings.json"
+local path_ds_notify_legacy_dir = worked_dir .. "/DS Notify"
+local path_ds_notify_legacy_settings = path_ds_notify_legacy_dir .. "/Settings.json"
+
+local ds_effil_ok, ds_effil = pcall(require, "effil")
+local ds_requests_ok = pcall(require, "requests")
 
 local default_settings = {
 	general = {
@@ -117,6 +124,23 @@ local Menu = {
 local SIDEBAR = {
 	{ id = "update", label = "GitHub", page = 0 },
 	{ id = "notify", label = "Уведомление", page = 1 },
+	{ id = "discord", label = "Discord", page = 2 },
+}
+
+local ds_default_settings = {
+	general = {
+		webhook = "",
+		send_dialogs = true,
+		send_chat = true,
+	},
+	search_text = {},
+}
+
+local DsNotify = {
+	settings = nil,
+	ready = false,
+	buf_webhook = nil,
+	buf_phrase = nil,
 }
 
 local Offme = {
@@ -1149,6 +1173,238 @@ local function offme_tick()
 	end
 end
 
+local function ds_ensure_dir()
+	ensure_data_dir()
+	pcall(createDirectory, path_ds_notify_dir)
+end
+
+local function ds_merge_defaults(dst, src)
+	for k, v in pairs(src) do
+		if type(v) == "table" then
+			if type(dst[k]) ~= "table" then
+				dst[k] = {}
+			end
+			ds_merge_defaults(dst[k], v)
+		elseif dst[k] == nil then
+			dst[k] = v
+		end
+	end
+end
+
+local function ds_save_settings()
+	if not DsNotify.settings then
+		return
+	end
+	ds_ensure_dir()
+	write_json_file(path_ds_notify_settings, DsNotify.settings)
+end
+
+local function ds_copy_file(src, dst)
+	local rf = io.open(src, "rb")
+	if not rf then
+		return false
+	end
+	local data = rf:read("*a")
+	rf:close()
+	local wf = io.open(dst, "wb")
+	if not wf then
+		return false
+	end
+	wf:write(data or "")
+	wf:close()
+	return true
+end
+
+local function ds_load_settings()
+	if DsNotify.ready then
+		return
+	end
+	DsNotify.ready = true
+	ds_ensure_dir()
+	if not doesFileExist(path_ds_notify_settings) and doesFileExist(path_ds_notify_legacy_settings) then
+		ds_copy_file(path_ds_notify_legacy_settings, path_ds_notify_settings)
+	end
+	local loaded = read_json_file(path_ds_notify_settings)
+	if loaded then
+		DsNotify.settings = loaded
+	else
+		DsNotify.settings = {}
+	end
+	ds_merge_defaults(DsNotify.settings, ds_default_settings)
+	if type(DsNotify.settings.search_text) ~= "table" then
+		DsNotify.settings.search_text = {}
+	end
+	local wh = tostring(DsNotify.settings.general.webhook or "")
+	DsNotify.buf_webhook = imgui.new.char[4096](wh)
+	DsNotify.buf_phrase = imgui.new.char[1024]("")
+end
+
+local function ds_buf_to_str(buf)
+	local ok, r = pcall(function()
+		return u8:decode(ffi_string(buf))
+	end)
+	return (ok and type(r) == "string") and r or ffi_string(buf)
+end
+
+local function ds_str_to_im(s)
+	return im_utf8(s)
+end
+
+local function ds_async_http_request(method, url, args, resolve, reject)
+	if not ds_effil_ok or not ds_requests_ok or not lua_thread or not lua_thread.create then
+		if reject then
+			reject("effil/requests недоступны")
+		end
+		return
+	end
+	local request_thread = ds_effil.thread(function(m, u, a)
+		local requests = require("requests")
+		local result, response = pcall(requests.request, m, u, ds_effil.dump(a))
+		if result then
+			response.json, response.xml = nil, nil
+			return true, response
+		else
+			return false, response
+		end
+	end)(method, url, args)
+	resolve = resolve or function() end
+	reject = reject or function() end
+	lua_thread.create(function()
+		local runner = request_thread
+		while true do
+			local status, err = runner:status()
+			if not err then
+				if status == "completed" then
+					local result, response = runner:get()
+					if result then
+						resolve(response)
+					else
+						reject(response)
+					end
+					return
+				elseif status == "canceled" then
+					reject(status)
+					return
+				end
+			else
+				reject(err)
+				return
+			end
+			wait(0)
+		end
+	end)
+end
+
+local function ds_send_webhook(url, data)
+	if url == "" then
+		return
+	end
+	ds_async_http_request("POST", url, {
+		headers = { ["content-type"] = "application/json" },
+		data = u8(data),
+	}, function() end, function() end)
+end
+
+local function ds_on_server_message(text)
+	if not DsNotify.settings or not DsNotify.settings.general.send_chat then
+		return
+	end
+	local phrases = DsNotify.settings.search_text
+	if type(phrases) ~= "table" or #phrases == 0 then
+		return
+	end
+	local webhook = tostring(DsNotify.settings.general.webhook or "")
+	if webhook == "" then
+		return
+	end
+	local msg_text = tostring(text or "")
+	for _, value in ipairs(phrases) do
+		if value ~= "" and msg_text:find(tostring(value), 1, true) then
+			local msg = msg_text:gsub("{......}", "")
+			msg = msg:gsub("%%", "%%%%")
+			ds_send_webhook(
+				webhook,
+				([=[{
+  "content": null,
+  "embeds": [
+    {
+      "description": "%s",
+      "color": 16744062
+    }
+  ],
+  "attachments": []
+}]=]):format(msg)
+			)
+			return
+		end
+	end
+end
+
+local function render_discord_page()
+	ds_load_settings()
+	local dpi = custom_dpi
+	local cfg = DsNotify.settings.general
+
+	imgui.TextColored(accent(0.95), im_utf8("Discord — отправка в webhook"))
+	imgui.Spacing()
+
+	if not ds_effil_ok or not ds_requests_ok then
+		imgui.TextColored(imgui.ImVec4(1, 0.45, 0.35, 1), im_utf8("Нужны библиотеки effil и requests в moonloader/lib"))
+	end
+
+	imgui.Text(im_utf8("Webhook URL:"))
+	imgui.PushItemWidth(-1)
+	if imgui.InputText("##ds_webhook", DsNotify.buf_webhook, 4096) then
+		cfg.webhook = ds_buf_to_str(DsNotify.buf_webhook)
+		ds_save_settings()
+	end
+	imgui.PopItemWidth()
+	imgui.Spacing()
+
+	if accent_button(cfg.send_chat and "Отключить отправку чата##ds_chat" or "Включить отправку чата##ds_chat", -1, 32 * dpi) then
+		cfg.send_chat = not cfg.send_chat
+		ds_save_settings()
+	end
+	imgui.Spacing()
+
+	if cfg.send_chat then
+		imgui.TextColored(accent(1), im_utf8("Фразы для поиска в чате"))
+		imgui.TextWrapped(im_utf8("Сохраняются в " .. path_ds_notify_settings))
+		imgui.Spacing()
+
+		if imgui.BeginChild("##ds_phrases", imgui.ImVec2(-1, 180 * dpi), true) then
+			local remove_idx = nil
+			for index, value in ipairs(DsNotify.settings.search_text) do
+				imgui.TextWrapped(ds_str_to_im(tostring(value)))
+				imgui.SameLine()
+				if imgui.Button(im_utf8("X##ds_rm_" .. index), imgui.ImVec2(28 * dpi, 22 * dpi)) then
+					remove_idx = index
+				end
+			end
+			if remove_idx then
+				table.remove(DsNotify.settings.search_text, remove_idx)
+				ds_save_settings()
+			end
+			imgui.EndChild()
+		end
+
+		imgui.Spacing()
+		imgui.Text(im_utf8("Добавить фразу:"))
+		imgui.PushItemWidth(-80 * dpi)
+		imgui.InputText("##ds_phrase_new", DsNotify.buf_phrase, 1024)
+		imgui.PopItemWidth()
+		imgui.SameLine()
+		if accent_button("+##ds_add", 70 * dpi, 28 * dpi) then
+			local phrase = ds_buf_to_str(DsNotify.buf_phrase)
+			if phrase ~= "" then
+				table.insert(DsNotify.settings.search_text, phrase)
+				DsNotify.buf_phrase[0] = 0
+				ds_save_settings()
+			end
+		end
+	end
+end
+
 local function render_notify_page()
 	if not Offme.buf then
 		offme_load_settings()
@@ -1321,6 +1577,13 @@ local function render_content()
 			imgui.TextWrapped(im_utf8(tostring(err)))
 			log_msg("[Tools] notify UI: " .. tostring(err))
 		end
+	elseif Menu.sidebar == 2 then
+		local ok, err = pcall(render_discord_page)
+		if not ok then
+			imgui.TextColored(imgui.ImVec4(1, 0.35, 0.35, 1), im_utf8("Ошибка раздела Discord"))
+			imgui.TextWrapped(im_utf8(tostring(err)))
+			log_msg("[Tools] discord UI: " .. tostring(err))
+		end
 	end
 end
 
@@ -1357,11 +1620,16 @@ local function register_imgui()
 					"##main_area",
 					imgui.ImVec2(0, -1),
 					false,
-					Menu.sidebar == 1 and 0 or imgui.WindowFlags.NoScrollbar
+					(Menu.sidebar == 1 or Menu.sidebar == 2) and 0 or imgui.WindowFlags.NoScrollbar
 				)
 				draw_close_button()
 				imgui.SetCursorPos(imgui.ImVec2(14 * dpi, 44 * dpi))
-				imgui.BeginChild("##content", imgui.ImVec2(-14 * dpi, -14 * dpi), false, Menu.sidebar == 1 and 0 or imgui.WindowFlags.NoScrollbar)
+				imgui.BeginChild(
+					"##content",
+					imgui.ImVec2(-14 * dpi, -14 * dpi),
+					false,
+					(Menu.sidebar == 1 or Menu.sidebar == 2) and 0 or imgui.WindowFlags.NoScrollbar
+				)
 				render_content()
 				imgui.EndChild()
 				imgui.EndChild()
@@ -1472,6 +1740,7 @@ function main()
 	load_settings()
 	sync_customization_bufs()
 	offme_load_settings()
+	ds_load_settings()
 	sampRegisterChatCommand("tools", open_tools_menu)
 	pcall(register_imgui)
 
@@ -1480,6 +1749,10 @@ function main()
 
 	if doesFileExist(worked_dir .. "/OFFme.lua") then
 		sampChat("{009EFF}[Tools]{ffffff} OFFme.lua можно отключить — он уже в /tools → Уведомление")
+	end
+
+	if doesFileExist(worked_dir .. "/tg.lua") then
+		sampChat("{009EFF}[Tools]{ffffff} tg.lua можно отключить — Discord уже в /tools → Discord")
 	end
 
 	if lua_thread and lua_thread.create then
@@ -1525,6 +1798,7 @@ function sampev.onServerMessage(color, text)
 			Offme.go_off = true
 		end
 	end
+	pcall(ds_on_server_message, text)
 end
 
 function onReceivePacket(id)
